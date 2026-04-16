@@ -294,8 +294,6 @@ def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
         value = response_row[col]
         if is_blank_or_na(value):
             continue
-        if normalized_key(value) == "no":
-            continue
         items.append((prettify_label(col), normalize_text(value)))
     return items
 
@@ -384,12 +382,19 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
                 for label, value in response_items:
                     table_data.append({"Date": label, "Response": value})
 
-                rows_html = "".join(
-                    [
-                        f"<tr><td style='width:40%; padding:8px 14px;'>{row['Date']}</td><td style='width:60%; padding:8px 14px;'>{row['Response']}</td></tr>"
-                        for row in table_data
-                    ]
-                )
+                rows_html_parts = []
+                for row in table_data:
+                    label = row["Date"]
+                    value = row["Response"]
+                    if normalized_key(label) == "reason":
+                        rows_html_parts.append(
+                            f"<tr><td style='width:40%; padding:8px 14px; color:#991b1b; font-weight:600;'>{label}</td><td style='width:60%; padding:8px 14px; background-color:#fde8e8; color:#991b1b; font-weight:600;'>{value}</td></tr>"
+                        )
+                    else:
+                        rows_html_parts.append(
+                            f"<tr><td style='width:40%; padding:8px 14px;'>{label}</td><td style='width:60%; padding:8px 14px;'>{value}</td></tr>"
+                        )
+                rows_html = "".join(rows_html_parts)
 
                 header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
                 table_html = f"""

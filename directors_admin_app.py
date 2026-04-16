@@ -1,6 +1,4 @@
-import os
 import re
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import gspread
@@ -65,7 +63,11 @@ RESPONSE_EXCLUDE_COLUMNS = {
     "servinggirl",
     "name",
     "director",
+    "availability month",
+    "availabilitymonth",
 }
+
+CURRENT_AVAILABILITY_MONTH = pd.Timestamp.now(tz="Africa/Johannesburg").strftime("%Y-%m")
 
 
 # -----------------------------
@@ -294,8 +296,25 @@ def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
         value = response_row[col]
         if is_blank_or_na(value):
             continue
+        if normalized_key(value) == "no":
+            continue
         items.append((prettify_label(col), normalize_text(value)))
     return items
+
+
+def get_availability_month(response_row: Optional[pd.Series]) -> str:
+    if response_row is None:
+        return ""
+
+    for col in response_row.index:
+        if normalized_key(col) in {"availability month", "availabilitymonth"}:
+            return normalize_text(response_row[col])
+    return ""
+
+
+def is_current_month_submission(response_row: Optional[pd.Series]) -> bool:
+    availability_month = get_availability_month(response_row)
+    return availability_month == CURRENT_AVAILABILITY_MONTH
 
 
 # -----------------------------
@@ -305,48 +324,47 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
     serving_girl = normalize_text(serving_row["Serving Girl"])
     director = normalize_text(serving_row["Director"])
 
-    st.markdown(f"### {serving_girl}")
+    availability_month = get_availability_month(latest_response_row)
+    has_current_submission = is_current_month_submission(latest_response_row)
+
+    if latest_response_row is None:
+        status_html = "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>No submission found for this serving girl.</div>"
+    elif has_current_submission:
+        status_html = f"<div style='background-color:#f3f4f6;color:#111827;padding:8px 0 8px 0;margin:2px 0 8px 0;font-weight:600;'>Latest response submitted for availability month: {availability_month}</div>"
+    else:
+        status_html = f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>Latest response found for availability month {availability_month or 'Unknown'}, not for the current month ({CURRENT_AVAILABILITY_MONTH}).</div>"
 
     primary_campus = map_campus(safe_get(serving_row, "Primary Campus"))
     secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))
     group_value = normalize_text(safe_get(serving_row, "Group"))
-
-    if primary_campus:
-        st.write(f"**Primary Campus:** {primary_campus}")
-    if secondary_campus:
-        st.write(f"**Secondary Campus:** {secondary_campus}")
-    if serving_girl != director and not is_blank_or_na(group_value):
-        st.write(f"**Group:** {group_value}")
-
-    if latest_response_row is not None:
-        ts = latest_response_row.get("__timestamp_parsed")
-        if pd.notna(ts):
-            try:
-                local_ts = ts.tz_convert("Africa/Johannesburg") if getattr(ts, "tzinfo", None) else ts
-            except Exception:
-                local_ts = ts
-            formatted_ts = pd.Timestamp(local_ts).strftime("%d %B %Y at %H:%M")
-            st.write(f"**Latest Response Submitted:** {formatted_ts}")
-        else:
-            st.write("**Latest Response Submitted:** Timestamp not available")
-
-        with st.expander("View latest response"):
-            response_items = extract_response_answers(latest_response_row)
-            if response_items:
-                for label, value in response_items:
-                    st.write(f"**{label}:** {value}")
-            else:
-                st.info("A response row was found, but no displayable answers were available.")
-    else:
-        st.write("**Latest Response Submitted:** No submission found")
-
     priority_sections = build_priority_sections(serving_row, mapping_dict)
-    for heading, values in priority_sections.items():
-        st.markdown(f"**{heading}**")
-        for value in values:
-            st.write(f"- {value}")
 
-    st.markdown("---")
+    with st.expander(serving_girl, expanded=False):
+        if primary_campus:
+            st.write(f"**Primary Campus:** {primary_campus}")
+        if secondary_campus:
+            st.write(f"**Secondary Campus:** {secondary_campus}")
+        if serving_girl != director and not is_blank_or_na(group_value):
+            st.write(f"**Group:** {group_value}")
+
+        st.markdown(status_html, unsafe_allow_html=True)
+
+        if latest_response_row is not None:
+            with st.expander("View latest response", expanded=False):
+                if availability_month:
+                    st.write(f"**Availability month:** {availability_month}")
+
+                response_items = extract_response_answers(latest_response_row)
+                if response_items:
+                    for label, value in response_items:
+                        st.write(f"**{label}:** {value}")
+                else:
+                    st.info("No Yes dates or additional response details were available.")
+
+        for heading, values in priority_sections.items():
+            st.markdown(f"**{heading}**")
+            for value in values:
+                st.markdown(f"- {value}")
 
 
 # -----------------------------
@@ -386,9 +404,7 @@ def main():
 
     if not director_options:
         st.warning("No directors were found in the ServingBase sheet.")
-        st.stop()
-
-    selected_director = st.selectbox("Select a director", director_options)
+        st.stop()    selected_director = st.selectbox("Select a director", director_options)
     selected_key = normalized_key(selected_director)
 
     director_rows = serving_df[serving_df["__director_key"] == selected_key].copy()
@@ -406,9 +422,7 @@ def main():
         latest_lookup = {
             row["__serving_girl_key"]: row
             for _, row in latest_responses_df.iterrows()
-        }
-
-    for _, row in director_rows.iterrows():
+        }    for _, row in director_rows.iterrows():
         sg_key = row["__serving_girl_key"]
         latest_response_row = latest_lookup.get(sg_key)
         render_serving_girl_card(row, latest_response_row, mapping_dict)

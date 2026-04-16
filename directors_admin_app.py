@@ -331,11 +331,11 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
     has_current_submission = is_current_month_submission(latest_response_row, target_month)
 
     if latest_response_row is None:
-        status_html = "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>No submission found for this serving girl.</div>"
+        status_html = "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px auto 10px auto;font-weight:600; width:80%;'>No submission found for this serving girl.</div>"
     elif has_current_submission:
-        status_html = f"<div style='background-color:#dcfce7;color:#166534;padding:8px 10px;border-radius:6px;margin:4px 0 4px 0;font-weight:600;'>Latest response submitted for availability month: {availability_month}</div>"
+        status_html = f"<div style='background-color:#dcfce7;color:#166534;padding:8px 10px;border-radius:6px;margin:4px auto 6px auto;font-weight:600; width:80%;'>Latest response submitted for availability month: {availability_month}</div>"
     else:
-        status_html = f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>Latest response found for availability month {availability_month or 'Unknown'}, not for the current target month ({target_month}).</div>"
+        status_html = f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px auto 10px auto;font-weight:600; width:80%;'>Latest response found for availability month {availability_month or 'Unknown'}, not for the current target month ({target_month}).</div>"
 
     primary_campus = map_campus(safe_get(serving_row, "Primary Campus"))
     secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))

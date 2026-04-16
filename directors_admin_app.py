@@ -404,7 +404,9 @@ def main():
 
     if not director_options:
         st.warning("No directors were found in the ServingBase sheet.")
-        st.stop()    selected_director = st.selectbox("Select a director", director_options)
+        st.stop()
+
+    selected_director = st.selectbox("Select a director", director_options)
     selected_key = normalized_key(selected_director)
 
     director_rows = serving_df[serving_df["__director_key"] == selected_key].copy()

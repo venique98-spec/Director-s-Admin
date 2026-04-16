@@ -345,31 +345,6 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
     with st.expander(serving_girl, expanded=False):
         
 
-        # Show campus + priorities as table
-        priority_rows = []
-
-        primary_campus = map_campus(safe_get(serving_row, "Primary Campus"))
-        secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))
-
-        if primary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>Primary Campus</td><td style='padding:6px 12px; width:60%;'>{primary_campus}</td></tr>")
-        if secondary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>Secondary Campus</td><td style='padding:6px 12px; width:60%;'>{secondary_campus}</td></tr>")
-
-        for heading, values in priority_sections.items():
-            joined_values = "<br>".join(values)
-            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>{heading}</td><td style='padding:6px 12px; width:60%;'>{joined_values}</td></tr>")
-
-        if priority_rows:
-            priority_table_html = f"""
-            <table style='width:100%; border-collapse:separate; table-layout:fixed; margin-bottom:10px;'>
-                <tbody>
-                    {''.join(priority_rows)}
-                </tbody>
-            </table>
-            """
-            st.markdown(priority_table_html, unsafe_allow_html=True)
-
         # Status between tables
         st.markdown(status_html, unsafe_allow_html=True)
 

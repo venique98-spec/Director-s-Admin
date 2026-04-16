@@ -33,9 +33,13 @@ CAMPUS_MAP = {
     "BRK": "Brooklyn",
     "POL": "Polokwane",
     "NEL": "Nelspruit",
+    # fallback for older / mistyped values in sheet
+    "UNIT CITY": "Unit City",
+    "UNITE CITY": "Unit City",
 }
 
 UNKNOWN_ROLE_MESSAGE = "Contact Venique to add this role to the mappings list"
+WATERMARK_TEXT = "Don't share with Serving girls"
 
 RESPONSE_EXCLUDE_COLUMNS = {
     "timestamp",
@@ -47,6 +51,11 @@ RESPONSE_EXCLUDE_COLUMNS = {
     "availability month",
     "availabilitymonth",
 }
+
+DIRECTOR_CONFIRMATION_TEXT = (
+    "I will not share this information with a Serving Girl, "
+    "it is only for director verfication purposes"
+)
 
 # --------------------------------------------------
 # HELPERS
@@ -82,18 +91,19 @@ def parse_timestamp(value) -> Optional[pd.Timestamp]:
 def find_column(df: pd.DataFrame, candidates: List[str], required: bool = True) -> Optional[str]:
     lookup = {normalized_key(col): col for col in df.columns}
     for candidate in candidates:
-        if normalized_key(candidate) in lookup:
-            return lookup[normalized_key(candidate)]
+        key = normalized_key(candidate)
+        if key in lookup:
+            return lookup[key]
     if required:
         raise KeyError(f"Could not find required column. Tried: {candidates}")
     return None
 
 
 def map_campus(code: str) -> str:
-    code = normalize_text(code)
-    if is_blank_or_na(code):
+    text = normalize_text(code)
+    if is_blank_or_na(text):
         return ""
-    return CAMPUS_MAP.get(code.upper(), code)
+    return CAMPUS_MAP.get(text.upper(), text)
 
 
 def split_multi_role_codes(value: str) -> List[str]:
@@ -181,7 +191,7 @@ def load_mapping_dict(mapping_df: pd.DataFrame) -> Dict[str, str]:
     short_col = find_column(mapping_df, ["Shortened Name", "ShortenedName", "Short Name", "Code"])
     display_col = find_column(mapping_df, ["Display Name", "DisplayName", "Role Name", "Full Name"])
 
-    mapping = {}
+    mapping: Dict[str, str] = {}
     for _, row in mapping_df.iterrows():
         short_name = normalize_text(row[short_col]).upper()
         display_name = normalize_text(row[display_col])
@@ -193,8 +203,11 @@ def load_mapping_dict(mapping_df: pd.DataFrame) -> Dict[str, str]:
 def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
     director_col = find_column(serving_df, ["Director"])
     serving_girl_col = find_column(serving_df, ["Serving Girl", "ServingGirl", "Name"])
-    primary_campus_col = find_column(serving_df, ["Primary Campus", "Primary Campu", "PrimaryCampus"], required=False)
-    secondary_campus_col = find_column(serving_df, ["Secondary Campus", "Secondary Camp", "SecondaryCampus"], required=False)
+    primary_campus_col = find_column(
+        serving_df,
+        ["Primary Campus", "Primary Campu", "PrimaryCampus"],
+        required=False,
+    )
     group_col = find_column(serving_df, ["Group"], required=False)
 
     renamed = serving_df.copy()
@@ -202,16 +215,15 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
         director_col: "Director",
         serving_girl_col: "Serving Girl",
     }
+
     if primary_campus_col:
         rename_map[primary_campus_col] = "Primary Campus"
-    if secondary_campus_col:
-        rename_map[secondary_campus_col] = "Secondary Campus"
     if group_col:
         rename_map[group_col] = "Group"
 
     renamed = renamed.rename(columns=rename_map)
 
-    for col in ["Primary Campus", "Secondary Campus", "Group"]:
+    for col in ["Primary Campus", "Group"]:
         if col not in renamed.columns:
             renamed[col] = ""
 
@@ -229,8 +241,14 @@ def prepare_latest_responses(responses_df: pd.DataFrame) -> pd.DataFrame:
     if responses_df.empty:
         return pd.DataFrame()
 
-    serving_girl_col = find_column(responses_df, ["Serving Girl", "ServingGirl", "Name", "Serving girl name"])
-    timestamp_col = find_column(responses_df, ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"])
+    serving_girl_col = find_column(
+        responses_df,
+        ["Serving Girl", "ServingGirl", "Name", "Serving girl name"],
+    )
+    timestamp_col = find_column(
+        responses_df,
+        ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"],
+    )
 
     df = responses_df.copy()
     df["__serving_girl_key"] = df[serving_girl_col].apply(normalized_key)
@@ -254,7 +272,7 @@ def map_role_codes_to_display(raw_value: str, mapping_dict: Dict[str, str]) -> L
 
 
 def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dict[str, List[str]]:
-    sections = {}
+    sections: Dict[str, List[str]] = {}
     for heading, cols in PRIORITY_GROUPS.items():
         values = []
         for col in cols:
@@ -268,7 +286,7 @@ def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dic
 
 
 def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
-    items = []
+    items: List[Tuple[str, str]] = []
     for col in response_row.index:
         if str(col).startswith("__"):
             continue
@@ -286,7 +304,6 @@ def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
 # --------------------------------------------------
 def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, str]) -> str:
     primary_campus = map_campus(serving_row.get("Primary Campus", ""))
-    secondary_campus = map_campus(serving_row.get("Secondary Campus", ""))
     group_value = normalize_text(serving_row.get("Group", ""))
     director = normalize_text(serving_row.get("Director", ""))
     serving_girl = normalize_text(serving_row.get("Serving Girl", ""))
@@ -297,11 +314,6 @@ def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, st
         rows.append(
             f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Primary Campus</td>"
             f"<td style='padding:8px 14px; width:60%;'>{primary_campus}</td></tr>"
-        )
-    if secondary_campus:
-        rows.append(
-            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Secondary Campus</td>"
-            f"<td style='padding:8px 14px; width:60%;'>{secondary_campus}</td></tr>"
         )
     if serving_girl != director and not is_blank_or_na(group_value):
         rows.append(
@@ -320,11 +332,32 @@ def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, st
         return ""
 
     return f"""
-    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
-        <tbody>
-            {''.join(rows)}
-        </tbody>
-    </table>
+    <div style='position:relative;'>
+        <div style='
+            position:absolute;
+            inset:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            pointer-events:none;
+            z-index:0;
+            overflow:hidden;
+        '>
+            <div style='
+                transform:rotate(-24deg);
+                font-size:38px;
+                font-weight:700;
+                color:rgba(120,120,120,0.11);
+                white-space:nowrap;
+                user-select:none;
+            '>{WATERMARK_TEXT}</div>
+        </div>
+        <table style='position:relative; z-index:1; width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
+            <tbody>
+                {''.join(rows)}
+            </tbody>
+        </table>
+    </div>
     """
 
 
@@ -382,21 +415,47 @@ def build_response_table_html(response_row: Optional[pd.Series]) -> str:
             )
 
     return f"""
-    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
-        <thead>
-            <tr>
-                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
-                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
-            </tr>
-        </thead>
-        <tbody>
-            {''.join(rows)}
-        </tbody>
-    </table>
+    <div style='position:relative;'>
+        <div style='
+            position:absolute;
+            inset:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            pointer-events:none;
+            z-index:0;
+            overflow:hidden;
+        '>
+            <div style='
+                transform:rotate(-24deg);
+                font-size:38px;
+                font-weight:700;
+                color:rgba(120,120,120,0.11);
+                white-space:nowrap;
+                user-select:none;
+            '>{WATERMARK_TEXT}</div>
+        </div>
+        <table style='position:relative; z-index:1; width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
+            <thead>
+                <tr>
+                    <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
+                    <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(rows)}
+            </tbody>
+        </table>
+    </div>
     """
 
 
-def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Optional[pd.Series], mapping_dict: Dict[str, str], target_month: str):
+def render_serving_girl_card(
+    serving_row: pd.Series,
+    latest_response_row: Optional[pd.Series],
+    mapping_dict: Dict[str, str],
+    target_month: str,
+):
     serving_girl = normalize_text(serving_row["Serving Girl"])
 
     with st.expander(serving_girl, expanded=False):
@@ -449,12 +508,41 @@ def main():
     selected_director = st.selectbox("Select a director", director_options)
     selected_director_key = normalized_key(selected_director)
 
+    director_confirmation_key = f"director_confirmation_{selected_director_key}"
+    confirmed = st.checkbox(
+        DIRECTOR_CONFIRMATION_TEXT,
+        key=director_confirmation_key,
+    )
+
+    if not confirmed:
+        st.info("Please tick the confirmation box before viewing serving girls.")
+        st.markdown("---")
+        st.markdown("## 📌 Report a change")
+        st.caption("Let us know if something needs to be updated.")
+
+        change_text = st.text_area(
+            "Describe the change you want:",
+            height=120,
+            key="report_change_text_locked",
+        )
+
+        if st.button("Submit change", key="submit_change_locked"):
+            if not change_text.strip():
+                st.warning("Please enter a description of the change.")
+            else:
+                try:
+                    append_change_request(selected_director, change_text.strip())
+                    st.success("Your change request has been submitted ✅")
+                except Exception as e:
+                    st.error(f"Error saving change: {e}")
+        st.stop()
+
     director_rows = serving_df[serving_df["__director_key"] == selected_director_key].copy()
     director_rows = director_rows.sort_values(by=["Serving Girl"], ascending=True)
 
     st.subheader(f"Director: {selected_director}")
 
-    latest_lookup = {}
+    latest_lookup: Dict[str, pd.Series] = {}
     if not latest_responses_df.empty:
         latest_lookup = {
             row["__serving_girl_key"]: row
@@ -473,7 +561,7 @@ def main():
 
     change_text = st.text_area("Describe the change you want:", height=120, key="report_change_text")
 
-    if st.button("Submit change"):
+    if st.button("Submit change", key="submit_change"):
         if not change_text.strip():
             st.warning("Please enter a description of the change.")
         else:

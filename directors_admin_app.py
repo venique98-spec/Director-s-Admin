@@ -355,18 +355,18 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
         secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))
 
         if primary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:30%;'>Primary Campus</td><td style='padding:6px 8px;'>{primary_campus}</td></tr>")
+            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:70%;'>Primary Campus</td><td style='padding:6px 8px; width:30%;'>{primary_campus}</td></tr>")
         if secondary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600;'>Secondary Campus</td><td style='padding:6px 8px;'>{secondary_campus}</td></tr>")
+            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:70%;'>Secondary Campus</td><td style='padding:6px 8px; width:30%;'>{secondary_campus}</td></tr>")
 
         # Priority rows
         for heading, values in priority_sections.items():
             joined_values = "<br>".join(values)
-            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600;'>{heading}</td><td style='padding:6px 8px;'>{joined_values}</td></tr>")
+            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:70%;'>{heading}</td><td style='padding:6px 8px; width:30%;'>{joined_values}</td></tr>")
 
         if priority_rows:
             priority_table_html = f"""
-            <table style='width:100%; border-collapse:collapse; margin-bottom:10px;'>
+            <table style='width:100%; border-collapse:collapse; table-layout:fixed; margin-bottom:10px;'>
                 <tbody>
                     {''.join(priority_rows)}
                 </tbody>

@@ -35,7 +35,6 @@ SHEET_ID = st.secrets.get("GSHEET_ID", "")
 SERVING_BASE_TAB = "ServingBase"
 RESPONSES_TAB = "Responses"
 MAPPING_TAB = "Mapping sheet"
-DEADLINES_TAB = "Deadlines"
 
 PRIORITY_GROUPS = {
     "First Priority": ["1A", "1B", "1C", "1D", "1E"],
@@ -311,45 +310,9 @@ def get_availability_month(response_row: Optional[pd.Series]) -> str:
     return ""
 
 
-def get_target_availability_month(deadlines_df: pd.DataFrame) -> str:
-    if deadlines_df is None or deadlines_df.empty:
-        now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
-        return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
-
-    month_col = find_column(deadlines_df, ["month"], required=False)
-    deadline_col = find_column(deadlines_df, ["deadline_local", "deadline local"], required=False)
-    timezone_col = find_column(deadlines_df, ["timezone", "time zone"], required=False)
-
-    if not month_col or not deadline_col:
-        now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
-        return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
-
-    df = deadlines_df.copy()
-    df[month_col] = df[month_col].apply(normalize_text)
-    df[deadline_col] = pd.to_datetime(df[deadline_col], errors="coerce")
-    df = df.dropna(subset=[deadline_col])
-
-    if df.empty:
-        now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
-        return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
-
-    timezone_value = "Africa/Johannesburg"
-    if timezone_col and timezone_col in df.columns and len(df) > 0:
-        first_tz = normalize_text(df[timezone_col].iloc[0])
-        if first_tz:
-            timezone_value = first_tz
-
-    now_local = pd.Timestamp.now(tz=timezone_value).tz_localize(None)
-    future_rows = df[df[deadline_col] >= now_local].sort_values(by=deadline_col, ascending=True)
-
-    if not future_rows.empty:
-        return normalize_text(future_rows.iloc[0][month_col])
-
-    latest_month = normalize_text(df.sort_values(by=deadline_col, ascending=False).iloc[0][month_col])
-    if latest_month:
-        return latest_month
-
-    return (pd.Timestamp.now(tz="Africa/Johannesburg") + pd.DateOffset(months=1)).strftime("%Y-%m")
+def get_target_availability_month() -> str:
+    now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
+    return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
 
 
 def is_current_month_submission(response_row: Optional[pd.Series], target_month: str) -> bool:
@@ -417,9 +380,7 @@ def main():
     try:
         serving_df_raw = read_tab(SERVING_BASE_TAB)
         responses_df_raw = read_tab(RESPONSES_TAB)
-        mapping_df_raw = read_tab(MAPPING_TAB)
-        deadlines_df_raw = read_tab(DEADLINES_TAB)
-    except Exception as e:
+        mapping_df_raw = read_tab(MAPPING_TAB)    except Exception as e:
         st.error(f"Could not read Google Sheets data: {e}")
         st.stop()
 
@@ -430,8 +391,7 @@ def main():
     try:
         serving_df, _ = prepare_servingbase(serving_df_raw)
         mapping_dict = load_mapping_dict(mapping_df_raw) if not mapping_df_raw.empty else {}
-        latest_responses_df, _, _ = prepare_latest_responses(responses_df_raw)
-        target_month = get_target_availability_month(deadlines_df_raw)
+        latest_responses_df, _, _ = prepare_latest_responses(responses_df_raw)        target_month = get_target_availability_month()
     except Exception as e:
         st.error(f"There is a setup issue in the sheet structure: {e}")
         st.stop()

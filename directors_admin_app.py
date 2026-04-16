@@ -366,7 +366,7 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
         if priority_rows:
             priority_table_html = f"""
-            <table style='width:80%; margin-left:10%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
+            <table style='width:80%; margin-left:0; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
                 <tbody>
                     {''.join(priority_rows)}
                 </tbody>
@@ -392,7 +392,7 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
                 header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
                 table_html = f"""
-                <table style='width:80%; margin-left:10%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
+                <table style='width:80%; margin-left:0; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
                     <thead>
                         <tr>
                             <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>

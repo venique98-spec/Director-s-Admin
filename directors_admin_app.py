@@ -35,6 +35,7 @@ SHEET_ID = st.secrets.get("GSHEET_ID", "")
 SERVING_BASE_TAB = "ServingBase"
 RESPONSES_TAB = "Responses"
 MAPPING_TAB = "Mapping sheet"
+DEADLINES_TAB = "Deadlines"
 
 PRIORITY_GROUPS = {
     "First Priority": ["1A", "1B", "1C", "1D", "1E"],
@@ -66,8 +67,6 @@ RESPONSE_EXCLUDE_COLUMNS = {
     "availability month",
     "availabilitymonth",
 }
-
-CURRENT_AVAILABILITY_MONTH = pd.Timestamp.now(tz="Africa/Johannesburg").strftime("%Y-%m")
 
 
 # -----------------------------
@@ -312,27 +311,68 @@ def get_availability_month(response_row: Optional[pd.Series]) -> str:
     return ""
 
 
-def is_current_month_submission(response_row: Optional[pd.Series]) -> bool:
+def get_target_availability_month(deadlines_df: pd.DataFrame) -> str:
+    if deadlines_df is None or deadlines_df.empty:
+        now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
+        return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
+
+    month_col = find_column(deadlines_df, ["month"], required=False)
+    deadline_col = find_column(deadlines_df, ["deadline_local", "deadline local"], required=False)
+    timezone_col = find_column(deadlines_df, ["timezone", "time zone"], required=False)
+
+    if not month_col or not deadline_col:
+        now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
+        return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
+
+    df = deadlines_df.copy()
+    df[month_col] = df[month_col].apply(normalize_text)
+    df[deadline_col] = pd.to_datetime(df[deadline_col], errors="coerce")
+    df = df.dropna(subset=[deadline_col])
+
+    if df.empty:
+        now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
+        return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
+
+    timezone_value = "Africa/Johannesburg"
+    if timezone_col and timezone_col in df.columns and len(df) > 0:
+        first_tz = normalize_text(df[timezone_col].iloc[0])
+        if first_tz:
+            timezone_value = first_tz
+
+    now_local = pd.Timestamp.now(tz=timezone_value).tz_localize(None)
+    future_rows = df[df[deadline_col] >= now_local].sort_values(by=deadline_col, ascending=True)
+
+    if not future_rows.empty:
+        return normalize_text(future_rows.iloc[0][month_col])
+
+    latest_month = normalize_text(df.sort_values(by=deadline_col, ascending=False).iloc[0][month_col])
+    if latest_month:
+        return latest_month
+
+    return (pd.Timestamp.now(tz="Africa/Johannesburg") + pd.DateOffset(months=1)).strftime("%Y-%m")
+
+
+def is_current_month_submission(response_row: Optional[pd.Series], target_month: str) -> bool:
     availability_month = get_availability_month(response_row)
-    return availability_month == CURRENT_AVAILABILITY_MONTH
+    return availability_month == target_month
 
 
 # -----------------------------
 # UI helpers
 # -----------------------------
-def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Optional[pd.Series], mapping_dict: Dict[str, str]):
+def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Optional[pd.Series], mapping_dict: Dict[str, str], target_month: str):
     serving_girl = normalize_text(serving_row["Serving Girl"])
     director = normalize_text(serving_row["Director"])
 
     availability_month = get_availability_month(latest_response_row)
-    has_current_submission = is_current_month_submission(latest_response_row)
+    has_current_submission = is_current_month_submission(latest_response_row, target_month)
 
     if latest_response_row is None:
         status_html = "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>No submission found for this serving girl.</div>"
     elif has_current_submission:
         status_html = f"<div style='background-color:#f3f4f6;color:#111827;padding:8px 0 8px 0;margin:2px 0 8px 0;font-weight:600;'>Latest response submitted for availability month: {availability_month}</div>"
     else:
-        status_html = f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>Latest response found for availability month {availability_month or 'Unknown'}, not for the current month ({CURRENT_AVAILABILITY_MONTH}).</div>"
+        status_html = f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>Latest response found for availability month {availability_month or 'Unknown'}, not for the current target month ({target_month}).</div>"
 
     primary_campus = map_campus(safe_get(serving_row, "Primary Campus"))
     secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))
@@ -378,6 +418,7 @@ def main():
         serving_df_raw = read_tab(SERVING_BASE_TAB)
         responses_df_raw = read_tab(RESPONSES_TAB)
         mapping_df_raw = read_tab(MAPPING_TAB)
+        deadlines_df_raw = read_tab(DEADLINES_TAB)
     except Exception as e:
         st.error(f"Could not read Google Sheets data: {e}")
         st.stop()
@@ -390,6 +431,7 @@ def main():
         serving_df, _ = prepare_servingbase(serving_df_raw)
         mapping_dict = load_mapping_dict(mapping_df_raw) if not mapping_df_raw.empty else {}
         latest_responses_df, _, _ = prepare_latest_responses(responses_df_raw)
+        target_month = get_target_availability_month(deadlines_df_raw)
     except Exception as e:
         st.error(f"There is a setup issue in the sheet structure: {e}")
         st.stop()
@@ -429,7 +471,7 @@ def main():
     for _, row in director_rows.iterrows():
         sg_key = row["__serving_girl_key"]
         latest_response_row = latest_lookup.get(sg_key)
-        render_serving_girl_card(row, latest_response_row, mapping_dict)
+        render_serving_girl_card(row, latest_response_row, mapping_dict, target_month)
 
 
 if __name__ == "__main__":

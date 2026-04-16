@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import gspread
@@ -6,35 +7,16 @@ import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
-# =========================================================
-# Director's Admin
-# =========================================================
-# Expected Google Sheets tabs:
-# 1. ServingBase
-# 2. Responses
-# 3. Mapping sheet
-#
-# Required columns in ServingBase:
-# Director, Serving Girl, Primary Campus, Secondary Campus, Group,
-# 1A,1B,1C,1D,1E,2A,2B,2C,2D,2E,3A,3B,3C,3D,3E,4A,4B,5
-#
-# Required columns in Mapping sheet:
-# Shortened Name, Display Name
-#
-# Responses tab:
-# Must still contain the serving girl name column and a timestamp column.
-# The code tries a few common header variations automatically.
-# =========================================================
-
 st.set_page_config(page_title="Director's Admin", layout="wide")
 
-# -----------------------------
-# Configuration
-# -----------------------------
+# --------------------------------------------------
+# CONFIG
+# --------------------------------------------------
 SHEET_ID = st.secrets.get("GSHEET_ID", "")
 SERVING_BASE_TAB = "ServingBase"
 RESPONSES_TAB = "Responses"
 MAPPING_TAB = "Mapping sheet"
+CHANGES_TAB = "Changes"
 
 PRIORITY_GROUPS = {
     "First Priority": ["1A", "1B", "1C", "1D", "1E"],
@@ -55,22 +37,20 @@ CAMPUS_MAP = {
 
 UNKNOWN_ROLE_MESSAGE = "Contact Venique to add this role to the mappings list"
 
-# Columns that should not be repeated in the latest response answer list
 RESPONSE_EXCLUDE_COLUMNS = {
     "timestamp",
     "time stamp",
+    "director",
     "serving girl",
     "servinggirl",
     "name",
-    "director",
     "availability month",
     "availabilitymonth",
 }
 
-
-# -----------------------------
-# Utilities
-# -----------------------------
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
 def normalize_text(value) -> str:
     if value is None:
         return ""
@@ -78,9 +58,9 @@ def normalize_text(value) -> str:
 
 
 def normalized_key(value) -> str:
-    value = normalize_text(value).lower()
-    value = re.sub(r"\s+", " ", value)
-    return value
+    text = normalize_text(value).lower()
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 def is_blank_or_na(value) -> bool:
@@ -88,34 +68,25 @@ def is_blank_or_na(value) -> bool:
     return text == "" or normalized_key(text) in {"n/a", "na", "none", "null", "nan", "-"}
 
 
-def prettify_label(label: str) -> str:
-    label = normalize_text(label)
-    return label
-
-
 def parse_timestamp(value) -> Optional[pd.Timestamp]:
     if is_blank_or_na(value):
         return None
-    parsed = pd.to_datetime(value, errors="coerce", utc=True)
-    if pd.isna(parsed):
-        parsed = pd.to_datetime(value, errors="coerce")
-    if pd.isna(parsed):
+    ts = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(ts):
+        ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
         return None
-    return parsed
+    return ts
 
 
 def find_column(df: pd.DataFrame, candidates: List[str], required: bool = True) -> Optional[str]:
-    normalized_to_actual = {normalized_key(col): col for col in df.columns}
+    lookup = {normalized_key(col): col for col in df.columns}
     for candidate in candidates:
-        if normalized_key(candidate) in normalized_to_actual:
-            return normalized_to_actual[normalized_key(candidate)]
+        if normalized_key(candidate) in lookup:
+            return lookup[normalized_key(candidate)]
     if required:
         raise KeyError(f"Could not find required column. Tried: {candidates}")
     return None
-
-
-def safe_get(row: pd.Series, column_name: str):
-    return row[column_name] if column_name in row.index else ""
 
 
 def map_campus(code: str) -> str:
@@ -130,13 +101,30 @@ def split_multi_role_codes(value: str) -> List[str]:
     if is_blank_or_na(text):
         return []
     parts = re.split(r"\s*&\s*|\s*,\s*|\s*/\s*|\s*\+\s*", text)
-    cleaned = [p.strip() for p in parts if p.strip()]
-    return cleaned
+    return [part.strip() for part in parts if part.strip()]
 
 
-# -----------------------------
-# Google Sheets access
-# -----------------------------
+def get_target_availability_month() -> str:
+    now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
+    return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
+
+
+def get_availability_month(response_row: Optional[pd.Series]) -> str:
+    if response_row is None:
+        return ""
+    for col in response_row.index:
+        if normalized_key(col) in {"availability month", "availabilitymonth"}:
+            return normalize_text(response_row[col])
+    return ""
+
+
+def is_current_month_submission(response_row: Optional[pd.Series], target_month: str) -> bool:
+    return get_availability_month(response_row) == target_month
+
+
+# --------------------------------------------------
+# GOOGLE SHEETS
+# --------------------------------------------------
 def get_gspread_client() -> gspread.Client:
     if not SHEET_ID:
         raise ValueError("Missing GSHEET_ID in Streamlit secrets.")
@@ -147,7 +135,7 @@ def get_gspread_client() -> gspread.Client:
 
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive",
     ]
     credentials = Credentials.from_service_account_info(service_account_info, scopes=scopes)
     return gspread.authorize(credentials)
@@ -171,15 +159,25 @@ def read_tab(tab_name: str) -> pd.DataFrame:
         if headers:
             df = pd.DataFrame(columns=headers)
 
-    # Strip header whitespace
     df.columns = [normalize_text(col) for col in df.columns]
     return df
 
 
-# -----------------------------
-# Data prep
-# -----------------------------
+def append_change_request(director: str, change_text: str) -> None:
+    workbook = open_workbook()
+    worksheet = workbook.worksheet(CHANGES_TAB)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    worksheet.append_row([timestamp, director, change_text], value_input_option="USER_ENTERED")
+    read_tab.clear()
+
+
+# --------------------------------------------------
+# DATA PREP
+# --------------------------------------------------
 def load_mapping_dict(mapping_df: pd.DataFrame) -> Dict[str, str]:
+    if mapping_df.empty:
+        return {}
+
     short_col = find_column(mapping_df, ["Shortened Name", "ShortenedName", "Short Name", "Code"])
     display_col = find_column(mapping_df, ["Display Name", "DisplayName", "Role Name", "Full Name"])
 
@@ -192,7 +190,7 @@ def load_mapping_dict(mapping_df: pd.DataFrame) -> Dict[str, str]:
     return mapping
 
 
-def prepare_servingbase(serving_df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
     director_col = find_column(serving_df, ["Director"])
     serving_girl_col = find_column(serving_df, ["Serving Girl", "ServingGirl", "Name"])
     primary_campus_col = find_column(serving_df, ["Primary Campus", "Primary Campu", "PrimaryCampus"], required=False)
@@ -213,43 +211,34 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[st
 
     renamed = renamed.rename(columns=rename_map)
 
-    for heading, cols in PRIORITY_GROUPS.items():
-        for c in cols:
-            if c not in renamed.columns:
-                renamed[c] = ""
+    for col in ["Primary Campus", "Secondary Campus", "Group"]:
+        if col not in renamed.columns:
+            renamed[col] = ""
 
-    if "Primary Campus" not in renamed.columns:
-        renamed["Primary Campus"] = ""
-    if "Secondary Campus" not in renamed.columns:
-        renamed["Secondary Campus"] = ""
-    if "Group" not in renamed.columns:
-        renamed["Group"] = ""
+    for cols in PRIORITY_GROUPS.values():
+        for col in cols:
+            if col not in renamed.columns:
+                renamed[col] = ""
 
-    return renamed, rename_map
+    renamed["__director_key"] = renamed["Director"].apply(normalized_key)
+    renamed["__serving_girl_key"] = renamed["Serving Girl"].apply(normalized_key)
+    return renamed
 
 
-def prepare_latest_responses(responses_df: pd.DataFrame) -> Tuple[pd.DataFrame, str, str]:
+def prepare_latest_responses(responses_df: pd.DataFrame) -> pd.DataFrame:
     if responses_df.empty:
-        return responses_df.copy(), "Serving Girl", "timestamp"
+        return pd.DataFrame()
 
-    serving_girl_col = find_column(
-        responses_df,
-        ["Serving Girl", "ServingGirl", "Name", "Serving girl name"],
-    )
-    timestamp_col = find_column(
-        responses_df,
-        ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"],
-    )
+    serving_girl_col = find_column(responses_df, ["Serving Girl", "ServingGirl", "Name", "Serving girl name"])
+    timestamp_col = find_column(responses_df, ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"])
 
     df = responses_df.copy()
-    df["__serving_girl_key"] = df[serving_girl_col].apply(lambda x: normalized_key(x))
+    df["__serving_girl_key"] = df[serving_girl_col].apply(normalized_key)
     df["__timestamp_parsed"] = df[timestamp_col].apply(parse_timestamp)
-    df = df.dropna(subset=["__serving_girl_key"])
     df = df[df["__serving_girl_key"] != ""]
     df = df.sort_values(by="__timestamp_parsed", ascending=False, na_position="last")
     latest = df.drop_duplicates(subset=["__serving_girl_key"], keep="first")
-
-    return latest, serving_girl_col, timestamp_col
+    return latest
 
 
 def map_role_codes_to_display(raw_value: str, mapping_dict: Dict[str, str]) -> List[str]:
@@ -257,14 +246,11 @@ def map_role_codes_to_display(raw_value: str, mapping_dict: Dict[str, str]) -> L
     if not codes:
         return []
 
-    display_values = []
+    results = []
     for code in codes:
-        upper_code = code.upper()
-        if upper_code in mapping_dict:
-            display_values.append(mapping_dict[upper_code])
-        else:
-            display_values.append(UNKNOWN_ROLE_MESSAGE)
-    return display_values
+        code_upper = code.upper()
+        results.append(mapping_dict.get(code_upper, UNKNOWN_ROLE_MESSAGE))
+    return results
 
 
 def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dict[str, List[str]]:
@@ -272,13 +258,10 @@ def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dic
     for heading, cols in PRIORITY_GROUPS.items():
         values = []
         for col in cols:
-            if col not in row.index:
-                continue
-            raw_value = safe_get(row, col)
+            raw_value = normalize_text(row.get(col, ""))
             if is_blank_or_na(raw_value):
                 continue
             values.extend(map_role_codes_to_display(raw_value, mapping_dict))
-        values = [v for v in values if not is_blank_or_na(v)]
         if values:
             sections[heading] = values
     return sections
@@ -294,131 +277,143 @@ def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
         value = response_row[col]
         if is_blank_or_na(value):
             continue
-        items.append((prettify_label(col), normalize_text(value)))
+        items.append((normalize_text(col), normalize_text(value)))
     return items
 
 
-def get_availability_month(response_row: Optional[pd.Series]) -> str:
+# --------------------------------------------------
+# RENDERING
+# --------------------------------------------------
+def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, str]) -> str:
+    primary_campus = map_campus(serving_row.get("Primary Campus", ""))
+    secondary_campus = map_campus(serving_row.get("Secondary Campus", ""))
+    group_value = normalize_text(serving_row.get("Group", ""))
+    director = normalize_text(serving_row.get("Director", ""))
+    serving_girl = normalize_text(serving_row.get("Serving Girl", ""))
+    priority_sections = build_priority_sections(serving_row, mapping_dict)
+
+    rows = []
+    if primary_campus:
+        rows.append(
+            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Primary Campus</td>"
+            f"<td style='padding:8px 14px; width:60%;'>{primary_campus}</td></tr>"
+        )
+    if secondary_campus:
+        rows.append(
+            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Secondary Campus</td>"
+            f"<td style='padding:8px 14px; width:60%;'>{secondary_campus}</td></tr>"
+        )
+    if serving_girl != director and not is_blank_or_na(group_value):
+        rows.append(
+            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Group</td>"
+            f"<td style='padding:8px 14px; width:60%;'>{group_value}</td></tr>"
+        )
+
+    for heading, values in priority_sections.items():
+        joined_values = "<br>".join(values)
+        rows.append(
+            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>{heading}</td>"
+            f"<td style='padding:8px 14px; width:60%;'>{joined_values}</td></tr>"
+        )
+
+    if not rows:
+        return ""
+
+    return f"""
+    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
+    """
+
+
+def build_status_html(response_row: Optional[pd.Series], target_month: str) -> str:
+    availability_month = get_availability_month(response_row)
+
+    if response_row is None:
+        return (
+            "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;"
+            "border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
+            "No submission found for this serving girl.</div>"
+        )
+
+    if is_current_month_submission(response_row, target_month):
+        return (
+            f"<div style='background-color:#dcfce7;color:#166534;padding:10px 12px;"
+            f"border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
+            f"Latest response submitted for availability month: {availability_month}</div>"
+        )
+
+    return (
+        f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;"
+        f"border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
+        f"Latest response found for availability month {availability_month or 'Unknown'}, "
+        f"not for the current target month ({target_month}).</div>"
+    )
+
+
+def build_response_table_html(response_row: Optional[pd.Series]) -> str:
     if response_row is None:
         return ""
 
-    for col in response_row.index:
-        if normalized_key(col) in {"availability month", "availabilitymonth"}:
-            return normalize_text(response_row[col])
-    return ""
+    response_items = extract_response_answers(response_row)
+    if not response_items:
+        return "<div style='margin-top:8px;'>No response details available.</div>"
 
-
-def get_target_availability_month() -> str:
-    now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
-    return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
-
-
-def is_current_month_submission(response_row: Optional[pd.Series], target_month: str) -> bool:
     availability_month = get_availability_month(response_row)
-    return availability_month == target_month
+    header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
+
+    rows = []
+    for label, value in response_items:
+        if normalized_key(label) == "reason":
+            rows.append(
+                f"<tr>"
+                f"<td style='padding:8px 14px; width:40%; color:#991b1b; font-weight:600;'>Reason</td>"
+                f"<td style='padding:8px 14px; width:60%; background-color:#fde8e8; color:#991b1b; font-weight:600;'>{value}</td>"
+                f"</tr>"
+            )
+        else:
+            rows.append(
+                f"<tr>"
+                f"<td style='padding:8px 14px; width:40%;'>{label}</td>"
+                f"<td style='padding:8px 14px; width:60%;'>{value}</td>"
+                f"</tr>"
+            )
+
+    return f"""
+    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
+        <thead>
+            <tr>
+                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
+                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
+    """
 
 
-# -----------------------------
-# UI helpers
-# -----------------------------
 def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Optional[pd.Series], mapping_dict: Dict[str, str], target_month: str):
     serving_girl = normalize_text(serving_row["Serving Girl"])
-    director = normalize_text(serving_row["Director"])
-
-    availability_month = get_availability_month(latest_response_row)
-    has_current_submission = is_current_month_submission(latest_response_row, target_month)
-
-    if latest_response_row is None:
-        status_html = "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>No submission found for this serving girl.</div>"
-    elif has_current_submission:
-        status_html = f"<div style='background-color:#dcfce7;color:#166534;padding:8px 10px;border-radius:6px;margin:6px 0 6px 0;font-weight:600;'>Latest response submitted for availability month: {availability_month}</div>"
-    else:
-        status_html = f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>Latest response found for availability month {availability_month or 'Unknown'}, not for the current target month ({target_month}).</div>"
-
-    primary_campus = map_campus(safe_get(serving_row, "Primary Campus"))
-    secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))
-    group_value = normalize_text(safe_get(serving_row, "Group"))
-    priority_sections = build_priority_sections(serving_row, mapping_dict)
 
     with st.expander(serving_girl, expanded=False):
-        
-
-        # Status between tables
-        st.markdown(status_html, unsafe_allow_html=True)
-
-        # Then show latest response as table
-        priority_rows = []
-
-        # Campus rows
-        primary_campus = map_campus(safe_get(serving_row, "Primary Campus"))
-        secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))
-
-        if primary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>Primary Campus</td><td style='padding:6px 12px; width:60%;'>{primary_campus}</td></tr>")
-        if secondary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>Secondary Campus</td><td style='padding:6px 12px; width:60%;'>{secondary_campus}</td></tr>")
-
-        # Priority rows
-        for heading, values in priority_sections.items():
-            joined_values = "<br>".join(values)
-            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>{heading}</td><td style='padding:6px 12px; width:60%;'>{joined_values}</td></tr>")
-
-        if priority_rows:
-            priority_table_html = f"""
-            <table style='width:80%; margin-left:0; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
-                <tbody>
-                    {''.join(priority_rows)}
-                </tbody>
-            </table>
-            """
+        priority_table_html = build_priority_table_html(serving_row, mapping_dict)
+        if priority_table_html:
             st.markdown(priority_table_html, unsafe_allow_html=True)
 
-        # Then show latest response as table
-        if latest_response_row is not None:
-            response_items = extract_response_answers(latest_response_row)
+        st.markdown(build_status_html(latest_response_row, target_month), unsafe_allow_html=True)
 
-            if response_items:
-                table_data = []
-                for label, value in response_items:
-                    table_data.append({"Date": label, "Response": value})
-
-                rows_html_parts = []
-                for row in table_data:
-                    label = row["Date"]
-                    value = row["Response"]
-                    if normalized_key(label) == "reason":
-                        rows_html_parts.append(
-                            f"<tr><td style='width:40%; padding:8px 14px; color:#991b1b; font-weight:600;'>{label}</td><td style='width:60%; padding:8px 14px; background-color:#fde8e8; color:#991b1b; font-weight:600;'>{value}</td></tr>"
-                        )
-                    else:
-                        rows_html_parts.append(
-                            f"<tr><td style='width:40%; padding:8px 14px;'>{label}</td><td style='width:60%; padding:8px 14px;'>{value}</td></tr>"
-                        )
-                rows_html = "".join(rows_html_parts)
-
-                header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
-                table_html = f"""
-                <table style='width:80%; margin-left:0; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
-                    <thead>
-                        <tr>
-                            <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
-                            <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows_html}
-                    </tbody>
-                </table>
-                """
-
-                st.markdown(table_html, unsafe_allow_html=True)
-            else:
-                st.info("No Yes dates or additional response details were available.")
+        response_table_html = build_response_table_html(latest_response_row)
+        if response_table_html:
+            st.markdown(response_table_html, unsafe_allow_html=True)
 
 
-# -----------------------------
-# Main app
-# -----------------------------
+# --------------------------------------------------
+# MAIN
+# --------------------------------------------------
 def main():
     st.title("Director's Admin")
     st.caption("View each serving girl under a director, their scheduled priorities, and the latest response submitted.")
@@ -431,54 +426,17 @@ def main():
         st.error(f"Could not read Google Sheets data: {e}")
         st.stop()
 
-# =========================
-# REPORT A CHANGE SECTION
-# =========================
-st.markdown("---")
-st.markdown("## 📌 Report a change")
-
-with st.container():
-    st.markdown("_Let us know if something needs to be updated._")
-
-    change_text = st.text_area("Describe the change you want:", height=120)
-
-    if st.button("Submit change"):
-        if not change_text.strip():
-            st.warning("Please enter a description of the change.")
-        else:
-            try:
-                changes_sheet = read_tab("Changes")
-            except:
-                changes_sheet = None
-
-            try:
-                import datetime
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                # Append row to Google Sheet
-                sheet = get_gsheet_client().open_by_key(st.secrets["GSHEET_ID"]).worksheet("Changes")
-                sheet.append_row([timestamp, selected_director, change_text])
-
-                st.success("Your change request has been submitted ✅")
-            except Exception as e:
-                st.error(f"Error saving change: {e}")
-
     if serving_df_raw.empty:
         st.warning("The ServingBase sheet is empty.")
         st.stop()
 
     try:
-        serving_df, _ = prepare_servingbase(serving_df_raw)
-        mapping_dict = load_mapping_dict(mapping_df_raw) if not mapping_df_raw.empty else {}
-        latest_responses_df, _, _ = prepare_latest_responses(responses_df_raw)
-        target_month = get_target_availability_month()
+        serving_df = prepare_servingbase(serving_df_raw)
+        latest_responses_df = prepare_latest_responses(responses_df_raw)
+        mapping_dict = load_mapping_dict(mapping_df_raw)
     except Exception as e:
         st.error(f"There is a setup issue in the sheet structure: {e}")
         st.stop()
-
-    serving_df = serving_df.copy()
-    serving_df["__director_key"] = serving_df["Director"].apply(normalized_key)
-    serving_df["__serving_girl_key"] = serving_df["Serving Girl"].apply(normalized_key)
 
     director_options = sorted(
         [d for d in serving_df["Director"].dropna().astype(str).map(str.strip).unique().tolist() if d.strip()]
@@ -489,29 +447,41 @@ with st.container():
         st.stop()
 
     selected_director = st.selectbox("Select a director", director_options)
-    selected_key = normalized_key(selected_director)
+    selected_director_key = normalized_key(selected_director)
 
-    director_rows = serving_df[serving_df["__director_key"] == selected_key].copy()
+    director_rows = serving_df[serving_df["__director_key"] == selected_director_key].copy()
     director_rows = director_rows.sort_values(by=["Serving Girl"], ascending=True)
 
     st.subheader(f"Director: {selected_director}")
 
-    if director_rows.empty:
-        st.info("No serving girls were found for this director.")
-        st.stop()
-
-    if latest_responses_df.empty:
-            latest_lookup = {}
+    latest_lookup = {}
     if not latest_responses_df.empty:
         latest_lookup = {
             row["__serving_girl_key"]: row
             for _, row in latest_responses_df.iterrows()
         }
 
+    target_month = get_target_availability_month()
+
     for _, row in director_rows.iterrows():
-        sg_key = row["__serving_girl_key"]
-        latest_response_row = latest_lookup.get(sg_key)
+        latest_response_row = latest_lookup.get(row["__serving_girl_key"])
         render_serving_girl_card(row, latest_response_row, mapping_dict, target_month)
+
+    st.markdown("---")
+    st.markdown("## 📌 Report a change")
+    st.caption("Let us know if something needs to be updated.")
+
+    change_text = st.text_area("Describe the change you want:", height=120, key="report_change_text")
+
+    if st.button("Submit change"):
+        if not change_text.strip():
+            st.warning("Please enter a description of the change.")
+        else:
+            try:
+                append_change_request(selected_director, change_text.strip())
+                st.success("Your change request has been submitted ✅")
+            except Exception as e:
+                st.error(f"Error saving change: {e}")
 
 
 if __name__ == "__main__":

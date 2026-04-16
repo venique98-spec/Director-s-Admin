@@ -333,7 +333,7 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
     if latest_response_row is None:
         status_html = "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>No submission found for this serving girl.</div>"
     elif has_current_submission:
-        status_html = f"<div style='background-color:#f3f4f6;color:#111827;padding:8px 0 8px 0;margin:2px 0 8px 0;font-weight:600;'>Latest response submitted for availability month: {availability_month}</div>"
+        status_html = f"<div style='background-color:#dcfce7;color:#166534;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>Latest response submitted for availability month: {availability_month}</div>"
     else:
         status_html = f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>Latest response found for availability month {availability_month or 'Unknown'}, not for the current target month ({target_month}).</div>"
 

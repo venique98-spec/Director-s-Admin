@@ -354,9 +354,9 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
         # Show priorities first
         for heading, values in priority_sections.items():
-            st.markdown(f"**{heading}**")
+            st.markdown(f"**{heading}**", unsafe_allow_html=True)
             for value in values:
-                st.markdown(f"- {value}")
+                st.markdown(f"<div style='margin-left:10px;margin-bottom:2px;'>• {value}</div>", unsafe_allow_html=True)
 
         # Then show latest response dropdown
         if latest_response_row is not None:

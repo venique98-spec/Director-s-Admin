@@ -373,8 +373,28 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
                         "Response": value
                     })
 
-                df_table = pd.DataFrame(table_data)
-                st.table(df_table)
+                # Build HTML table with a header row for Availability month
+                header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
+                rows_html = "".join([f"<tr><td>{row['Date']}</td><td>{row['Response']}</td></tr>" for row in table_data])
+
+                table_html = f"""
+                <table style='width:100%; border-collapse:collapse;'>
+                    <thead>
+                        <tr>
+                            <th colspan='2' style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb;'>{header_text}</th>
+                        </tr>
+                        <tr>
+                            <th style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb;'>Date</th>
+                            <th style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb;'>Response</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table>
+                """
+
+                st.markdown(table_html, unsafe_allow_html=True)
             else:
                 st.info("No Yes dates or additional response details were available.")
 

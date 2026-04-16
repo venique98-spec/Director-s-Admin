@@ -424,7 +424,7 @@ def main():
         latest_lookup = {
             row["__serving_girl_key"]: row
             for _, row in latest_responses_df.iterrows()
-        }    for _, row in director_rows.iterrows():
+        for _, row in director_rows.iterrows():
         sg_key = row["__serving_girl_key"]
         latest_response_row = latest_lookup.get(sg_key)
         render_serving_girl_card(row, latest_response_row, mapping_dict)

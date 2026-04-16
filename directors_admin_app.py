@@ -352,6 +352,13 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
         st.markdown(status_html, unsafe_allow_html=True)
 
+        # Show priorities first
+        for heading, values in priority_sections.items():
+            st.markdown(f"**{heading}**")
+            for value in values:
+                st.markdown(f"- {value}")
+
+        # Then show latest response dropdown
         if latest_response_row is not None:
             with st.expander("View latest response", expanded=False):
                 if availability_month:
@@ -363,11 +370,6 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
                         st.write(f"**{label}:** {value}")
                 else:
                     st.info("No Yes dates or additional response details were available.")
-
-        for heading, values in priority_sections.items():
-            st.markdown(f"**{heading}**")
-            for value in values:
-                st.markdown(f"- {value}")
 
 
 # -----------------------------

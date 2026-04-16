@@ -358,18 +358,25 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
             for value in values:
                 st.markdown(f"<div style='margin-left:10px;margin-bottom:2px;'>• {value}</div>", unsafe_allow_html=True)
 
-        # Then show latest response dropdown
+        # Then show latest response as table
         if latest_response_row is not None:
-            with st.expander("View latest response", expanded=False):
-                if availability_month:
-                    st.write(f"**Availability month:** {availability_month}")
+            if availability_month:
+                st.write(f"**Availability month:** {availability_month}")
 
-                response_items = extract_response_answers(latest_response_row)
-                if response_items:
-                    for label, value in response_items:
-                        st.write(f"**{label}:** {value}")
-                else:
-                    st.info("No Yes dates or additional response details were available.")
+            response_items = extract_response_answers(latest_response_row)
+
+            if response_items:
+                table_data = []
+                for label, value in response_items:
+                    table_data.append({
+                        "Date": label,
+                        "Response": value
+                    })
+
+                df_table = pd.DataFrame(table_data)
+                st.table(df_table)
+            else:
+                st.info("No Yes dates or additional response details were available.")
 
 
 # -----------------------------

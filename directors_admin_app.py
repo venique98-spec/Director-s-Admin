@@ -355,18 +355,18 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
         secondary_campus = map_campus(safe_get(serving_row, "Secondary Campus"))
 
         if primary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:70%;'>Primary Campus</td><td style='padding:6px 8px; width:30%;'>{primary_campus}</td></tr>")
+            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>Primary Campus</td><td style='padding:6px 12px; width:60%;'>{primary_campus}</td></tr>")
         if secondary_campus:
-            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:70%;'>Secondary Campus</td><td style='padding:6px 8px; width:30%;'>{secondary_campus}</td></tr>")
+            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>Secondary Campus</td><td style='padding:6px 12px; width:60%;'>{secondary_campus}</td></tr>")
 
         # Priority rows
         for heading, values in priority_sections.items():
             joined_values = "<br>".join(values)
-            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:70%;'>{heading}</td><td style='padding:6px 8px; width:30%;'>{joined_values}</td></tr>")
+            priority_rows.append(f"<tr><td style='padding:6px 12px; font-weight:600; width:40%;'>{heading}</td><td style='padding:6px 12px; width:60%;'>{joined_values}</td></tr>")
 
         if priority_rows:
             priority_table_html = f"""
-            <table style='width:80%; margin-left:10%; border-collapse:collapse; table-layout:fixed; margin-bottom:10px;'>
+            <table style='width:80%; margin-left:10%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
                 <tbody>
                     {''.join(priority_rows)}
                 </tbody>
@@ -385,20 +385,18 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
                 rows_html = "".join(
                     [
-                        f"<tr><td style='width:70%; padding:8px;'>{row['Date']}</td><td style='width:30%; padding:8px;'>{row['Response']}</td></tr>"
+                        f"<tr><td style='width:40%; padding:8px 14px;'>{row['Date']}</td><td style='width:60%; padding:8px 14px;'>{row['Response']}</td></tr>"
                         for row in table_data
                     ]
                 )
 
                 header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
-                st.markdown(f"**{header_text}**")
-
                 table_html = f"""
-                <table style='width:80%; margin-left:10%; border-collapse:collapse; table-layout:fixed;'>
+                <table style='width:80%; margin-left:10%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
                     <thead>
                         <tr>
-                            <th style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; width:70%;'>Date</th>
-                            <th style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; width:30%;'>Response</th>
+                            <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
+                            <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
                         </tr>
                     </thead>
                     <tbody>

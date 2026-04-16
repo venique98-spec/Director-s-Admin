@@ -380,7 +380,8 @@ def main():
     try:
         serving_df_raw = read_tab(SERVING_BASE_TAB)
         responses_df_raw = read_tab(RESPONSES_TAB)
-        mapping_df_raw = read_tab(MAPPING_TAB)    except Exception as e:
+        mapping_df_raw = read_tab(MAPPING_TAB)
+    except Exception as e:
         st.error(f"Could not read Google Sheets data: {e}")
         st.stop()
 

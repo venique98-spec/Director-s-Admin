@@ -431,6 +431,38 @@ def main():
         st.error(f"Could not read Google Sheets data: {e}")
         st.stop()
 
+# =========================
+# REPORT A CHANGE SECTION
+# =========================
+st.markdown("---")
+st.markdown("## 📌 Report a change")
+
+with st.container():
+    st.markdown("_Let us know if something needs to be updated._")
+
+    change_text = st.text_area("Describe the change you want:", height=120)
+
+    if st.button("Submit change"):
+        if not change_text.strip():
+            st.warning("Please enter a description of the change.")
+        else:
+            try:
+                changes_sheet = read_tab("Changes")
+            except:
+                changes_sheet = None
+
+            try:
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # Append row to Google Sheet
+                sheet = get_gsheet_client().open_by_key(st.secrets["GSHEET_ID"]).worksheet("Changes")
+                sheet.append_row([timestamp, selected_director, change_text])
+
+                st.success("Your change request has been submitted ✅")
+            except Exception as e:
+                st.error(f"Error saving change: {e}")
+
     if serving_df_raw.empty:
         st.warning("The ServingBase sheet is empty.")
         st.stop()

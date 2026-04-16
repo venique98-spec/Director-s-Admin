@@ -366,7 +366,7 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
         if priority_rows:
             priority_table_html = f"""
-            <table style='width:100%; border-collapse:collapse; table-layout:fixed; margin-bottom:10px;'>
+            <table style='width:80%; margin:0 auto; border-collapse:collapse; table-layout:fixed; margin-bottom:10px;'>
                 <tbody>
                     {''.join(priority_rows)}
                 </tbody>
@@ -394,7 +394,7 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
                 st.markdown(f"**{header_text}**")
 
                 table_html = f"""
-                <table style='width:100%; border-collapse:collapse; table-layout:fixed;'>
+                <table style='width:80%; margin:0 auto; border-collapse:collapse; table-layout:fixed;'>
                     <thead>
                         <tr>
                             <th style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; width:70%;'>Date</th>

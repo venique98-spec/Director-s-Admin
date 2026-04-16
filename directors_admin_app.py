@@ -352,17 +352,24 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
         st.markdown(status_html, unsafe_allow_html=True)
 
-        # Show priorities first
+        # Show priorities as table
+        priority_rows = []
         for heading, values in priority_sections.items():
-            st.markdown(f"**{heading}**", unsafe_allow_html=True)
-            for value in values:
-                st.markdown(f"<div style='margin-left:10px;margin-bottom:2px;'>• {value}</div>", unsafe_allow_html=True)
+            joined_values = "<br>".join(values)
+            priority_rows.append(f"<tr><td style='padding:6px 8px; font-weight:600; width:30%;'>{heading}</td><td style='padding:6px 8px;'>{joined_values}</td></tr>")
+
+        if priority_rows:
+            priority_table_html = f"""
+            <table style='width:100%; border-collapse:collapse; margin-bottom:10px;'>
+                <tbody>
+                    {''.join(priority_rows)}
+                </tbody>
+            </table>
+            """
+            st.markdown(priority_table_html, unsafe_allow_html=True)
 
         # Then show latest response as table
         if latest_response_row is not None:
-            if availability_month:
-                st.write(f"**Availability month:** {availability_month}")
-
             response_items = extract_response_answers(latest_response_row)
 
             if response_items:

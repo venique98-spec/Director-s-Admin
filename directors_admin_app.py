@@ -392,7 +392,8 @@ def main():
     try:
         serving_df, _ = prepare_servingbase(serving_df_raw)
         mapping_dict = load_mapping_dict(mapping_df_raw) if not mapping_df_raw.empty else {}
-        latest_responses_df, _, _ = prepare_latest_responses(responses_df_raw)        target_month = get_target_availability_month()
+        latest_responses_df, _, _ = prepare_latest_responses(responses_df_raw)
+        target_month = get_target_availability_month()
     except Exception as e:
         st.error(f"There is a setup issue in the sheet structure: {e}")
         st.stop()

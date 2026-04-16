@@ -388,14 +388,12 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
 
                 # Build HTML table with a header row for Availability month
                 header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
+                st.markdown(f"**{header_text}**")
                 rows_html = "".join([f"<tr><td style='width:70%; padding:8px;'>{row['Date']}</td><td style='width:30%; padding:8px;'>{row['Response']}</td></tr>" for row in table_data])
 
                 table_html = f"""
                 <table style='width:100%; border-collapse:collapse; table-layout:fixed;'>
-                    <thead>
-                        <tr>
-                            <th colspan='2' style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb;'>{header_text}</th>
-                        </tr>
+                    
                         <tr>
                             <th style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; width:70%;'>Date</th>
                             <th style='text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; width:30%;'>Response</th>

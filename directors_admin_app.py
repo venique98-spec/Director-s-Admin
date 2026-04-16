@@ -343,12 +343,7 @@ def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Option
     priority_sections = build_priority_sections(serving_row, mapping_dict)
 
     with st.expander(serving_girl, expanded=False):
-        if primary_campus:
-            st.write(f"**Primary Campus:** {primary_campus}")
-        if secondary_campus:
-            st.write(f"**Secondary Campus:** {secondary_campus}")
-        if serving_girl != director and not is_blank_or_na(group_value):
-            st.write(f"**Group:** {group_value}")
+        
 
         st.markdown(status_html, unsafe_allow_html=True)
 

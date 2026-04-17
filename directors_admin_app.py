@@ -459,12 +459,25 @@ def main():
         st.stop()
 
     selected_director = st.selectbox("Select a director", director_options)
-    selected_director_key = normalized_key(selected_director)
+selected_director_key = normalized_key(selected_director)
 
-    director_rows = serving_df[serving_df["__director_key"] == selected_director_key].copy()
-    director_rows = director_rows.sort_values(by=["Serving Girl"], ascending=True)
+# Mandatory confirmation checkbox
+confirm_key = f"confirm_{selected_director_key}"
+confirmed = st.checkbox(
+    "I confirm that I will not share this information with any Serving Girl, as it is intended solely for director verification purposes",
+    key=confirm_key
+)
 
-    st.subheader(f"Director: {selected_director}")
+st.subheader(f"Director: {selected_director}")
+
+# Block access until confirmed
+if not confirmed:
+    st.warning("Please confirm the declaration above to access serving girls.")
+    st.stop()
+
+
+director_rows = serving_df[serving_df["__director_key"] == selected_director_key].copy()
+director_rows = director_rows.sort_values(by=["Serving Girl"], ascending=True)
 
     latest_lookup = {}
     if not latest_responses_df.empty:

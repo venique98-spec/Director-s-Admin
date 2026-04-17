@@ -28,9 +28,9 @@ PRIORITY_GROUPS = {
 
 CAMPUS_MAP = {
     "TGB": "Tygerberg",
-    "UC": "Unit City",
-    "UNIT CITY": "Unit City",
-    "UNITE CITY": "Unit City",
+    "UC": "Unite City",
+    "UNIT CITY": "Unite City",
+    "UNITE CITY": "Unite City",
     "LYN": "Lynwood",
     "BRK": "Brooklyn",
     "POL": "Polokwane",
@@ -93,7 +93,7 @@ def find_column(df: pd.DataFrame, candidates: List[str], required: bool = True) 
         if key in lookup:
             return lookup[key]
     if required:
-        raise KeyError(f"Could not find required column. Tried: {candidates}")
+        raise KeyError(f"Could not find required column. Tried: {candidates}. Found: {list(df.columns)}")
     return None
 
 
@@ -130,6 +130,24 @@ def is_current_month_submission(response_row: Optional[pd.Series], target_month:
     return get_availability_month(response_row) == target_month
 
 
+def make_unique_headers(headers: List[str]) -> List[str]:
+    seen = {}
+    unique = []
+
+    for i, header in enumerate(headers):
+        base = normalize_text(header)
+        if base == "":
+            base = f"Unnamed_{i+1}"
+
+        if base not in seen:
+            seen[base] = 0
+            unique.append(base)
+        else:
+            seen[base] += 1
+            unique.append(f"{base}_{seen[base]}")
+    return unique
+
+
 # --------------------------------------------------
 # GOOGLE SHEETS
 # --------------------------------------------------
@@ -159,14 +177,28 @@ def open_workbook():
 def read_tab(tab_name: str) -> pd.DataFrame:
     workbook = open_workbook()
     worksheet = workbook.worksheet(tab_name)
-    records = worksheet.get_all_records()
-    df = pd.DataFrame(records)
+    values = worksheet.get_all_values()
 
-    if df.empty:
-        headers = worksheet.row_values(1)
-        if headers:
-            df = pd.DataFrame(columns=headers)
+    if not values:
+        return pd.DataFrame()
 
+    raw_headers = values[0]
+    headers = make_unique_headers(raw_headers)
+
+    rows = values[1:] if len(values) > 1 else []
+    if not rows:
+        return pd.DataFrame(columns=headers)
+
+    max_cols = len(headers)
+    normalized_rows = []
+    for row in rows:
+        if len(row) < max_cols:
+            row = row + [""] * (max_cols - len(row))
+        elif len(row) > max_cols:
+            row = row[:max_cols]
+        normalized_rows.append(row)
+
+    df = pd.DataFrame(normalized_rows, columns=headers)
     df.columns = [normalize_text(col) for col in df.columns]
     return df
 
@@ -189,7 +221,7 @@ def load_mapping_dict(mapping_df: pd.DataFrame) -> Dict[str, str]:
     short_col = find_column(mapping_df, ["Shortened Name", "ShortenedName", "Short Name", "Code"])
     display_col = find_column(mapping_df, ["Display Name", "DisplayName", "Role Name", "Full Name"])
 
-    mapping: Dict[str, str] = {}
+    mapping = {}
     for _, row in mapping_df.iterrows():
         short_name = normalize_text(row[short_col]).upper()
         display_name = normalize_text(row[display_col])
@@ -234,7 +266,10 @@ def prepare_latest_responses(responses_df: pd.DataFrame) -> pd.DataFrame:
     if responses_df.empty:
         return pd.DataFrame()
 
-    serving_girl_col = find_column(responses_df, ["Serving Girl", "ServingGirl", "Name", "Serving girl name"])
+    serving_girl_col = find_column(
+        responses_df,
+        ["Serving Girl", "ServingGirl", "Name", "Serving girl name"],
+    )
     timestamp_col = find_column(
         responses_df,
         ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"],
@@ -262,7 +297,7 @@ def map_role_codes_to_display(raw_value: str, mapping_dict: Dict[str, str]) -> L
 
 
 def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dict[str, List[str]]:
-    sections: Dict[str, List[str]] = {}
+    sections = {}
     for heading, cols in PRIORITY_GROUPS.items():
         values = []
         for col in cols:
@@ -276,7 +311,7 @@ def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dic
 
 
 def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
-    items: List[Tuple[str, str]] = []
+    items = []
     for col in response_row.index:
         if str(col).startswith("__"):
             continue
@@ -489,7 +524,7 @@ def main():
 
     st.subheader(f"Director: {selected_director}")
 
-    latest_lookup: Dict[str, pd.Series] = {}
+    latest_lookup = {}
     if not latest_responses_df.empty:
         latest_lookup = {
             row["__serving_girl_key"]: row

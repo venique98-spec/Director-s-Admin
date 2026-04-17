@@ -1,3 +1,4 @@
+import html
 import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -17,6 +18,8 @@ SERVING_BASE_TAB = "ServingBase"
 RESPONSES_TAB = "Responses"
 MAPPING_TAB = "Mapping sheet"
 CHANGES_TAB = "Changes"
+
+LOCAL_TIMEZONE = "Africa/Johannesburg"
 
 PRIORITY_GROUPS = {
     "First Priority": ["1A", "1B", "1C", "1D", "1E"],
@@ -51,9 +54,10 @@ RESPONSE_EXCLUDE_COLUMNS = {
 }
 
 DIRECTOR_CONFIRMATION_TEXT = (
-    "I will not share this information with a Serving Girl, "
-    "it is only for director verfication purposes"
+    "I confirm that I will not share this information with any Serving Girl, "
+    "as it is intended solely for director verification purposes."
 )
+
 
 # --------------------------------------------------
 # HELPERS
@@ -70,6 +74,10 @@ def normalized_key(value) -> str:
     return text
 
 
+def safe_html(value) -> str:
+    return html.escape(normalize_text(value))
+
+
 def is_blank_or_na(value) -> bool:
     text = normalize_text(value)
     return text == "" or normalized_key(text) in {"n/a", "na", "none", "null", "nan", "-"}
@@ -78,11 +86,20 @@ def is_blank_or_na(value) -> bool:
 def parse_timestamp(value) -> Optional[pd.Timestamp]:
     if is_blank_or_na(value):
         return None
+
     ts = pd.to_datetime(value, errors="coerce", utc=True)
     if pd.isna(ts):
         ts = pd.to_datetime(value, errors="coerce")
+
     if pd.isna(ts):
         return None
+
+    if getattr(ts, "tzinfo", None) is None:
+        try:
+            ts = ts.tz_localize(LOCAL_TIMEZONE)
+        except Exception:
+            return None
+
     return ts
 
 
@@ -92,8 +109,10 @@ def find_column(df: pd.DataFrame, candidates: List[str], required: bool = True) 
         key = normalized_key(candidate)
         if key in lookup:
             return lookup[key]
+
     if required:
         raise KeyError(f"Could not find required column. Tried: {candidates}. Found: {list(df.columns)}")
+
     return None
 
 
@@ -113,7 +132,7 @@ def split_multi_role_codes(value: str) -> List[str]:
 
 
 def get_target_availability_month() -> str:
-    now_local = pd.Timestamp.now(tz="Africa/Johannesburg")
+    now_local = pd.Timestamp.now(tz=LOCAL_TIMEZONE)
     return (now_local + pd.DateOffset(months=1)).strftime("%Y-%m")
 
 
@@ -145,7 +164,21 @@ def make_unique_headers(headers: List[str]) -> List[str]:
         else:
             seen[base] += 1
             unique.append(f"{base}_{seen[base]}")
+
     return unique
+
+
+def deduplicate_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    result = []
+
+    for value in values:
+        key = normalized_key(value)
+        if key not in seen:
+            seen.add(key)
+            result.append(value)
+
+    return result
 
 
 # --------------------------------------------------
@@ -206,8 +239,11 @@ def read_tab(tab_name: str) -> pd.DataFrame:
 def append_change_request(director: str, change_text: str) -> None:
     workbook = open_workbook()
     worksheet = workbook.worksheet(CHANGES_TAB)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.append_row([timestamp, director, change_text], value_input_option="USER_ENTERED")
+    timestamp = pd.Timestamp.now(tz=LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+    worksheet.append_row(
+        [timestamp, normalize_text(director), normalize_text(change_text)],
+        value_input_option="USER_ENTERED",
+    )
     read_tab.clear()
 
 
@@ -227,6 +263,7 @@ def load_mapping_dict(mapping_df: pd.DataFrame) -> Dict[str, str]:
         display_name = normalize_text(row[display_col])
         if short_name and display_name:
             mapping[short_name] = display_name
+
     return mapping
 
 
@@ -241,6 +278,7 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
         director_col: "Director",
         serving_girl_col: "Serving Girl",
     }
+
     if primary_campus_col:
         rename_map[primary_campus_col] = "Primary Campus"
     if group_col:
@@ -259,6 +297,10 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
 
     renamed["__director_key"] = renamed["Director"].apply(normalized_key)
     renamed["__serving_girl_key"] = renamed["Serving Girl"].apply(normalized_key)
+    renamed["__response_lookup_key"] = (
+        renamed["__director_key"] + "||" + renamed["__serving_girl_key"]
+    )
+
     return renamed
 
 
@@ -274,13 +316,31 @@ def prepare_latest_responses(responses_df: pd.DataFrame) -> pd.DataFrame:
         responses_df,
         ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"],
     )
+    director_col = find_column(
+        responses_df,
+        ["Director"],
+        required=False,
+    )
 
     df = responses_df.copy()
     df["__serving_girl_key"] = df[serving_girl_col].apply(normalized_key)
     df["__timestamp_parsed"] = df[timestamp_col].apply(parse_timestamp)
+
+    if director_col:
+        df["__director_key"] = df[director_col].apply(normalized_key)
+        df["__response_lookup_key"] = df["__director_key"] + "||" + df["__serving_girl_key"]
+    else:
+        df["__director_key"] = ""
+        df["__response_lookup_key"] = df["__serving_girl_key"]
+
     df = df[df["__serving_girl_key"] != ""]
     df = df.sort_values(by="__timestamp_parsed", ascending=False, na_position="last")
-    latest = df.drop_duplicates(subset=["__serving_girl_key"], keep="first")
+
+    if director_col:
+        latest = df.drop_duplicates(subset=["__response_lookup_key"], keep="first")
+    else:
+        latest = df.drop_duplicates(subset=["__serving_girl_key"], keep="first")
+
     return latest
 
 
@@ -293,7 +353,8 @@ def map_role_codes_to_display(raw_value: str, mapping_dict: Dict[str, str]) -> L
     for code in codes:
         code_upper = code.upper()
         results.append(mapping_dict.get(code_upper, UNKNOWN_ROLE_MESSAGE))
-    return results
+
+    return deduplicate_preserve_order(results)
 
 
 def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dict[str, List[str]]:
@@ -305,22 +366,29 @@ def build_priority_sections(row: pd.Series, mapping_dict: Dict[str, str]) -> Dic
             if is_blank_or_na(raw_value):
                 continue
             values.extend(map_role_codes_to_display(raw_value, mapping_dict))
+
+        values = deduplicate_preserve_order(values)
         if values:
             sections[heading] = values
+
     return sections
 
 
 def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
     items = []
+
     for col in response_row.index:
         if str(col).startswith("__"):
             continue
         if normalized_key(col) in RESPONSE_EXCLUDE_COLUMNS:
             continue
+
         value = response_row[col]
         if is_blank_or_na(value):
             continue
+
         items.append((normalize_text(col), normalize_text(value)))
+
     return items
 
 
@@ -335,21 +403,24 @@ def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, st
     priority_sections = build_priority_sections(serving_row, mapping_dict)
 
     rows = []
+
     if primary_campus:
         rows.append(
             f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Primary Campus</td>"
-            f"<td style='padding:8px 14px; width:60%;'>{primary_campus}</td></tr>"
+            f"<td style='padding:8px 14px; width:60%;'>{safe_html(primary_campus)}</td></tr>"
         )
+
+    # Keep original business logic: only show group if not blank and if the serving girl is not the director.
     if serving_girl != director and not is_blank_or_na(group_value):
         rows.append(
             f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Group</td>"
-            f"<td style='padding:8px 14px; width:60%;'>{group_value}</td></tr>"
+            f"<td style='padding:8px 14px; width:60%;'>{safe_html(group_value)}</td></tr>"
         )
 
     for heading, values in priority_sections.items():
-        joined_values = "<br>".join(values)
+        joined_values = "<br>".join(safe_html(value) for value in values)
         rows.append(
-            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>{heading}</td>"
+            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>{safe_html(heading)}</td>"
             f"<td style='padding:8px 14px; width:60%;'>{joined_values}</td></tr>"
         )
 
@@ -379,14 +450,14 @@ def build_status_html(response_row: Optional[pd.Series], target_month: str) -> s
         return (
             f"<div style='background-color:#dcfce7;color:#166534;padding:10px 12px;"
             f"border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
-            f"Latest response submitted for availability month: {availability_month}</div>"
+            f"Latest response submitted for availability month: {safe_html(availability_month)}</div>"
         )
 
     return (
         f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;"
         f"border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
-        f"Latest response found for availability month {availability_month or 'Unknown'}, "
-        f"not for the current target month ({target_month}).</div>"
+        f"Latest response found for availability month {safe_html(availability_month or 'Unknown')}, "
+        f"not for the current target month ({safe_html(target_month)}).</div>"
     )
 
 
@@ -406,15 +477,15 @@ def build_response_table_html(response_row: Optional[pd.Series]) -> str:
         if normalized_key(label) == "reason":
             rows.append(
                 f"<tr>"
-                f"<td style='padding:8px 14px; width:40%; color:#991b1b; font-weight:600;'>Reason</td>"
-                f"<td style='padding:8px 14px; width:60%; background-color:#fde8e8; color:#991b1b; font-weight:600;'>{value}</td>"
+                f"<td style='padding:8px 14px; width:40%; color:#991b1b; font-weight:600;'>{safe_html(label)}</td>"
+                f"<td style='padding:8px 14px; width:60%; background-color:#fde8e8; color:#991b1b; font-weight:600;'>{safe_html(value)}</td>"
                 f"</tr>"
             )
         else:
             rows.append(
                 f"<tr>"
-                f"<td style='padding:8px 14px; width:40%;'>{label}</td>"
-                f"<td style='padding:8px 14px; width:60%;'>{value}</td>"
+                f"<td style='padding:8px 14px; width:40%;'>{safe_html(label)}</td>"
+                f"<td style='padding:8px 14px; width:60%;'>{safe_html(value)}</td>"
                 f"</tr>"
             )
 
@@ -422,8 +493,8 @@ def build_response_table_html(response_row: Optional[pd.Series]) -> str:
     <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
         <thead>
             <tr>
-                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
-                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
+                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Field</th>
+                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{safe_html(header_text)}</th>
             </tr>
         </thead>
         <tbody>
@@ -458,7 +529,9 @@ def render_serving_girl_card(
 # --------------------------------------------------
 def main():
     st.title("Director's Admin")
-    st.caption("View each serving girl under a director, their scheduled priorities, and the latest response submitted.")
+    st.caption(
+        "View each serving girl under a director, their scheduled priorities, and the latest response submitted."
+    )
 
     try:
         serving_df_raw = read_tab(SERVING_BASE_TAB)
@@ -481,7 +554,11 @@ def main():
         st.stop()
 
     director_options = sorted(
-        [d for d in serving_df["Director"].dropna().astype(str).map(str.strip).unique().tolist() if d.strip()]
+        [
+            d
+            for d in serving_df["Director"].dropna().astype(str).map(str.strip).unique().tolist()
+            if d.strip()
+        ]
     )
 
     if not director_options:
@@ -525,16 +602,28 @@ def main():
     st.subheader(f"Director: {selected_director}")
 
     latest_lookup = {}
+
     if not latest_responses_df.empty:
-        latest_lookup = {
-            row["__serving_girl_key"]: row
-            for _, row in latest_responses_df.iterrows()
-        }
+        if "__response_lookup_key" in latest_responses_df.columns:
+            latest_lookup = {
+                row["__response_lookup_key"]: row
+                for _, row in latest_responses_df.iterrows()
+            }
+        else:
+            latest_lookup = {
+                row["__serving_girl_key"]: row
+                for _, row in latest_responses_df.iterrows()
+            }
 
     target_month = get_target_availability_month()
 
     for _, row in director_rows.iterrows():
-        latest_response_row = latest_lookup.get(row["__serving_girl_key"])
+        lookup_key = row.get("__response_lookup_key", row["__serving_girl_key"])
+
+        latest_response_row = latest_lookup.get(lookup_key)
+        if latest_response_row is None:
+            latest_response_row = latest_lookup.get(row["__serving_girl_key"])
+
         render_serving_girl_card(row, latest_response_row, mapping_dict, target_month)
 
     st.markdown("---")

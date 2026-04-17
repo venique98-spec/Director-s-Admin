@@ -28,9 +28,7 @@ PRIORITY_GROUPS = {
 
 CAMPUS_MAP = {
     "TGB": "Tygerberg",
-    "UC": "Unite City",
-    "UNIT CITY": "Unite City",
-    "UNITE CITY": "Unite City",
+    "UC": "Unit City",
     "LYN": "Lynwood",
     "BRK": "Brooklyn",
     "POL": "Polokwane",
@@ -49,11 +47,6 @@ RESPONSE_EXCLUDE_COLUMNS = {
     "availability month",
     "availabilitymonth",
 }
-
-DIRECTOR_CONFIRMATION_TEXT = (
-    "I will not share this information with a Serving Girl, "
-    "it is only for director verfication purposes"
-)
 
 # --------------------------------------------------
 # HELPERS
@@ -89,11 +82,10 @@ def parse_timestamp(value) -> Optional[pd.Timestamp]:
 def find_column(df: pd.DataFrame, candidates: List[str], required: bool = True) -> Optional[str]:
     lookup = {normalized_key(col): col for col in df.columns}
     for candidate in candidates:
-        key = normalized_key(candidate)
-        if key in lookup:
-            return lookup[key]
+        if normalized_key(candidate) in lookup:
+            return lookup[normalized_key(candidate)]
     if required:
-        raise KeyError(f"Could not find required column. Tried: {candidates}. Found: {list(df.columns)}")
+        raise KeyError(f"Could not find required column. Tried: {candidates}")
     return None
 
 
@@ -130,24 +122,6 @@ def is_current_month_submission(response_row: Optional[pd.Series], target_month:
     return get_availability_month(response_row) == target_month
 
 
-def make_unique_headers(headers: List[str]) -> List[str]:
-    seen = {}
-    unique = []
-
-    for i, header in enumerate(headers):
-        base = normalize_text(header)
-        if base == "":
-            base = f"Unnamed_{i+1}"
-
-        if base not in seen:
-            seen[base] = 0
-            unique.append(base)
-        else:
-            seen[base] += 1
-            unique.append(f"{base}_{seen[base]}")
-    return unique
-
-
 # --------------------------------------------------
 # GOOGLE SHEETS
 # --------------------------------------------------
@@ -177,28 +151,14 @@ def open_workbook():
 def read_tab(tab_name: str) -> pd.DataFrame:
     workbook = open_workbook()
     worksheet = workbook.worksheet(tab_name)
-    values = worksheet.get_all_values()
+    records = worksheet.get_all_records()
+    df = pd.DataFrame(records)
 
-    if not values:
-        return pd.DataFrame()
+    if df.empty:
+        headers = worksheet.row_values(1)
+        if headers:
+            df = pd.DataFrame(columns=headers)
 
-    raw_headers = values[0]
-    headers = make_unique_headers(raw_headers)
-
-    rows = values[1:] if len(values) > 1 else []
-    if not rows:
-        return pd.DataFrame(columns=headers)
-
-    max_cols = len(headers)
-    normalized_rows = []
-    for row in rows:
-        if len(row) < max_cols:
-            row = row + [""] * (max_cols - len(row))
-        elif len(row) > max_cols:
-            row = row[:max_cols]
-        normalized_rows.append(row)
-
-    df = pd.DataFrame(normalized_rows, columns=headers)
     df.columns = [normalize_text(col) for col in df.columns]
     return df
 
@@ -234,6 +194,7 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
     director_col = find_column(serving_df, ["Director"])
     serving_girl_col = find_column(serving_df, ["Serving Girl", "ServingGirl", "Name"])
     primary_campus_col = find_column(serving_df, ["Primary Campus", "Primary Campu", "PrimaryCampus"], required=False)
+    secondary_campus_col = find_column(serving_df, ["Secondary Campus", "Secondary Camp", "SecondaryCampus"], required=False)
     group_col = find_column(serving_df, ["Group"], required=False)
 
     renamed = serving_df.copy()
@@ -243,12 +204,14 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
     }
     if primary_campus_col:
         rename_map[primary_campus_col] = "Primary Campus"
+    if secondary_campus_col:
+        rename_map[secondary_campus_col] = "Secondary Campus"
     if group_col:
         rename_map[group_col] = "Group"
 
     renamed = renamed.rename(columns=rename_map)
 
-    for col in ["Primary Campus", "Group"]:
+    for col in ["Primary Campus", "Secondary Campus", "Group"]:
         if col not in renamed.columns:
             renamed[col] = ""
 
@@ -266,14 +229,8 @@ def prepare_latest_responses(responses_df: pd.DataFrame) -> pd.DataFrame:
     if responses_df.empty:
         return pd.DataFrame()
 
-    serving_girl_col = find_column(
-        responses_df,
-        ["Serving Girl", "ServingGirl", "Name", "Serving girl name"],
-    )
-    timestamp_col = find_column(
-        responses_df,
-        ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"],
-    )
+    serving_girl_col = find_column(responses_df, ["Serving Girl", "ServingGirl", "Name", "Serving girl name"])
+    timestamp_col = find_column(responses_df, ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"])
 
     df = responses_df.copy()
     df["__serving_girl_key"] = df[serving_girl_col].apply(normalized_key)
@@ -329,6 +286,7 @@ def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
 # --------------------------------------------------
 def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, str]) -> str:
     primary_campus = map_campus(serving_row.get("Primary Campus", ""))
+    secondary_campus = map_campus(serving_row.get("Secondary Campus", ""))
     group_value = normalize_text(serving_row.get("Group", ""))
     director = normalize_text(serving_row.get("Director", ""))
     serving_girl = normalize_text(serving_row.get("Serving Girl", ""))
@@ -339,6 +297,11 @@ def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, st
         rows.append(
             f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Primary Campus</td>"
             f"<td style='padding:8px 14px; width:60%;'>{primary_campus}</td></tr>"
+        )
+    if secondary_campus:
+        rows.append(
+            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Secondary Campus</td>"
+            f"<td style='padding:8px 14px; width:60%;'>{secondary_campus}</td></tr>"
         )
     if serving_girl != director and not is_blank_or_na(group_value):
         rows.append(
@@ -433,12 +396,7 @@ def build_response_table_html(response_row: Optional[pd.Series]) -> str:
     """
 
 
-def render_serving_girl_card(
-    serving_row: pd.Series,
-    latest_response_row: Optional[pd.Series],
-    mapping_dict: Dict[str, str],
-    target_month: str,
-):
+def render_serving_girl_card(serving_row: pd.Series, latest_response_row: Optional[pd.Series], mapping_dict: Dict[str, str], target_month: str):
     serving_girl = normalize_text(serving_row["Serving Girl"])
 
     with st.expander(serving_girl, expanded=False):
@@ -491,34 +449,6 @@ def main():
     selected_director = st.selectbox("Select a director", director_options)
     selected_director_key = normalized_key(selected_director)
 
-    confirmed = st.checkbox(
-        DIRECTOR_CONFIRMATION_TEXT,
-        key=f"director_confirmation_{selected_director_key}",
-    )
-
-    if not confirmed:
-        st.info("Please tick the confirmation box before viewing serving girls.")
-        st.markdown("---")
-        st.markdown("## 📌 Report a change")
-        st.caption("Let us know if something needs to be updated.")
-
-        change_text = st.text_area(
-            "Describe the change you want:",
-            height=120,
-            key="report_change_text_locked",
-        )
-
-        if st.button("Submit change", key="submit_change_locked"):
-            if not change_text.strip():
-                st.warning("Please enter a description of the change.")
-            else:
-                try:
-                    append_change_request(selected_director, change_text.strip())
-                    st.success("Your change request has been submitted ✅")
-                except Exception as e:
-                    st.error(f"Error saving change: {e}")
-        st.stop()
-
     director_rows = serving_df[serving_df["__director_key"] == selected_director_key].copy()
     director_rows = director_rows.sort_values(by=["Serving Girl"], ascending=True)
 
@@ -543,7 +473,7 @@ def main():
 
     change_text = st.text_area("Describe the change you want:", height=120, key="report_change_text")
 
-    if st.button("Submit change", key="submit_change"):
+    if st.button("Submit change"):
         if not change_text.strip():
             st.warning("Please enter a description of the change.")
         else:

@@ -151,15 +151,27 @@ def open_workbook():
 def read_tab(tab_name: str) -> pd.DataFrame:
     workbook = open_workbook()
     worksheet = workbook.worksheet(tab_name)
-    records = worksheet.get_all_records()
-    df = pd.DataFrame(records)
 
-    if df.empty:
-        headers = worksheet.row_values(1)
-        if headers:
-            df = pd.DataFrame(columns=headers)
+    data = worksheet.get_all_values()
+    if not data:
+        return pd.DataFrame()
 
-    df.columns = [normalize_text(col) for col in df.columns]
+    headers = data[0]
+    rows = data[1:]
+
+    # Fix duplicate headers
+    seen = {}
+    clean_headers = []
+    for h in headers:
+        h_clean = normalize_text(h)
+        if h_clean in seen:
+            seen[h_clean] += 1
+            h_clean = f"{h_clean}_{seen[h_clean]}"
+        else:
+            seen[h_clean] = 0
+        clean_headers.append(h_clean)
+
+    df = pd.DataFrame(rows, columns=clean_headers)
     return df
 
 

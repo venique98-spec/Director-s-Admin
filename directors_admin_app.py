@@ -29,17 +29,15 @@ PRIORITY_GROUPS = {
 CAMPUS_MAP = {
     "TGB": "Tygerberg",
     "UC": "Unit City",
+    "UNIT CITY": "Unit City",
+    "UNITE CITY": "Unit City",
     "LYN": "Lynwood",
     "BRK": "Brooklyn",
     "POL": "Polokwane",
     "NEL": "Nelspruit",
-    # fallback for older / mistyped values in sheet
-    "UNIT CITY": "Unit City",
-    "UNITE CITY": "Unit City",
 }
 
 UNKNOWN_ROLE_MESSAGE = "Contact Venique to add this role to the mappings list"
-WATERMARK_TEXT = "Don't share with Serving girls"
 
 RESPONSE_EXCLUDE_COLUMNS = {
     "timestamp",
@@ -100,10 +98,10 @@ def find_column(df: pd.DataFrame, candidates: List[str], required: bool = True) 
 
 
 def map_campus(code: str) -> str:
-    text = normalize_text(code)
-    if is_blank_or_na(text):
+    code = normalize_text(code)
+    if is_blank_or_na(code):
         return ""
-    return CAMPUS_MAP.get(text.upper(), text)
+    return CAMPUS_MAP.get(code.upper(), code)
 
 
 def split_multi_role_codes(value: str) -> List[str]:
@@ -203,11 +201,7 @@ def load_mapping_dict(mapping_df: pd.DataFrame) -> Dict[str, str]:
 def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
     director_col = find_column(serving_df, ["Director"])
     serving_girl_col = find_column(serving_df, ["Serving Girl", "ServingGirl", "Name"])
-    primary_campus_col = find_column(
-        serving_df,
-        ["Primary Campus", "Primary Campu", "PrimaryCampus"],
-        required=False,
-    )
+    primary_campus_col = find_column(serving_df, ["Primary Campus", "Primary Campu", "PrimaryCampus"], required=False)
     group_col = find_column(serving_df, ["Group"], required=False)
 
     renamed = serving_df.copy()
@@ -215,7 +209,6 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
         director_col: "Director",
         serving_girl_col: "Serving Girl",
     }
-
     if primary_campus_col:
         rename_map[primary_campus_col] = "Primary Campus"
     if group_col:
@@ -241,10 +234,7 @@ def prepare_latest_responses(responses_df: pd.DataFrame) -> pd.DataFrame:
     if responses_df.empty:
         return pd.DataFrame()
 
-    serving_girl_col = find_column(
-        responses_df,
-        ["Serving Girl", "ServingGirl", "Name", "Serving girl name"],
-    )
+    serving_girl_col = find_column(responses_df, ["Serving Girl", "ServingGirl", "Name", "Serving girl name"])
     timestamp_col = find_column(
         responses_df,
         ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"],
@@ -332,32 +322,11 @@ def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, st
         return ""
 
     return f"""
-    <div style='position:relative;'>
-        <div style='
-            position:absolute;
-            inset:0;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            pointer-events:none;
-            z-index:0;
-            overflow:hidden;
-        '>
-            <div style='
-                transform:rotate(-24deg);
-                font-size:38px;
-                font-weight:700;
-                color:rgba(120,120,120,0.11);
-                white-space:nowrap;
-                user-select:none;
-            '>{WATERMARK_TEXT}</div>
-        </div>
-        <table style='position:relative; z-index:1; width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
-            <tbody>
-                {''.join(rows)}
-            </tbody>
-        </table>
-    </div>
+    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
     """
 
 
@@ -415,38 +384,17 @@ def build_response_table_html(response_row: Optional[pd.Series]) -> str:
             )
 
     return f"""
-    <div style='position:relative;'>
-        <div style='
-            position:absolute;
-            inset:0;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            pointer-events:none;
-            z-index:0;
-            overflow:hidden;
-        '>
-            <div style='
-                transform:rotate(-24deg);
-                font-size:38px;
-                font-weight:700;
-                color:rgba(120,120,120,0.11);
-                white-space:nowrap;
-                user-select:none;
-            '>{WATERMARK_TEXT}</div>
-        </div>
-        <table style='position:relative; z-index:1; width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
-            <thead>
-                <tr>
-                    <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
-                    <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
-                </tr>
-            </thead>
-            <tbody>
-                {''.join(rows)}
-            </tbody>
-        </table>
-    </div>
+    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
+        <thead>
+            <tr>
+                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Date</th>
+                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{header_text}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
     """
 
 
@@ -508,10 +456,9 @@ def main():
     selected_director = st.selectbox("Select a director", director_options)
     selected_director_key = normalized_key(selected_director)
 
-    director_confirmation_key = f"director_confirmation_{selected_director_key}"
     confirmed = st.checkbox(
         DIRECTOR_CONFIRMATION_TEXT,
-        key=director_confirmation_key,
+        key=f"director_confirmation_{selected_director_key}",
     )
 
     if not confirmed:

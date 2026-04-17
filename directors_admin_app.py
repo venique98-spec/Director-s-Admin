@@ -1,6 +1,5 @@
 import html
 import re
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import gspread
@@ -20,6 +19,7 @@ MAPPING_TAB = "Mapping sheet"
 CHANGES_TAB = "Changes"
 
 LOCAL_TIMEZONE = "Africa/Johannesburg"
+SPECIAL_NEEDS_DIRECTOR_KEY = "monique nortje"
 
 PRIORITY_GROUPS = {
     "First Priority": ["1A", "1B", "1C", "1D", "1E"],
@@ -179,6 +179,11 @@ def deduplicate_preserve_order(values: List[str]) -> List[str]:
             result.append(value)
 
     return result
+
+
+def contains_role_code(raw_value: str, target_code: str) -> bool:
+    codes = [code.upper() for code in split_multi_role_codes(raw_value)]
+    return target_code.upper() in codes
 
 
 # --------------------------------------------------
@@ -392,6 +397,44 @@ def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
     return items
 
 
+def get_special_needs_serving_base(serving_df: pd.DataFrame) -> Dict[str, List[str]]:
+    special_needs_leaders = []
+    special_needs_serving_girls = []
+
+    priority_code_columns = []
+    for cols in PRIORITY_GROUPS.values():
+        priority_code_columns.extend(cols)
+
+    for _, row in serving_df.iterrows():
+        serving_girl_name = normalize_text(row.get("Serving Girl", ""))
+        if is_blank_or_na(serving_girl_name):
+            continue
+
+        found_sl = False
+        found_snsg = False
+
+        for col in priority_code_columns:
+            raw_value = normalize_text(row.get(col, ""))
+            if is_blank_or_na(raw_value):
+                continue
+
+            if contains_role_code(raw_value, "SL"):
+                found_sl = True
+            if contains_role_code(raw_value, "SNSG"):
+                found_snsg = True
+
+        if found_sl:
+            special_needs_leaders.append(serving_girl_name)
+
+        if found_snsg:
+            special_needs_serving_girls.append(serving_girl_name)
+
+    return {
+        "Special Needs Leader": deduplicate_preserve_order(sorted(special_needs_leaders)),
+        "Special Needs Serving Girl": deduplicate_preserve_order(sorted(special_needs_serving_girls)),
+    }
+
+
 # --------------------------------------------------
 # RENDERING
 # --------------------------------------------------
@@ -410,7 +453,6 @@ def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, st
             f"<td style='padding:8px 14px; width:60%;'>{safe_html(primary_campus)}</td></tr>"
         )
 
-    # Keep original business logic: only show group if not blank and if the serving girl is not the director.
     if serving_girl != director and not is_blank_or_na(group_value):
         rows.append(
             f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Group</td>"
@@ -499,6 +541,37 @@ def build_response_table_html(response_row: Optional[pd.Series]) -> str:
         </thead>
         <tbody>
             {''.join(rows)}
+        </tbody>
+    </table>
+    """
+
+
+def build_special_needs_table_html(serving_df: pd.DataFrame) -> str:
+    special_needs_data = get_special_needs_serving_base(serving_df)
+
+    leader_names = special_needs_data.get("Special Needs Leader", [])
+    snsg_names = special_needs_data.get("Special Needs Serving Girl", [])
+
+    leader_display = "<br>".join(safe_html(name) for name in leader_names) if leader_names else "-"
+    snsg_display = "<br>".join(safe_html(name) for name in snsg_names) if snsg_names else "-"
+
+    return f"""
+    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-top:8px;'>
+        <thead>
+            <tr>
+                <th style='text-align:left; padding:10px 14px; border-bottom:1px solid #e5e7eb; width:35%;'>Position</th>
+                <th style='text-align:left; padding:10px 14px; border-bottom:1px solid #e5e7eb; width:65%;'>Serving Girl</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td style='padding:10px 14px; font-weight:600;'>Special Needs Leader</td>
+                <td style='padding:10px 14px;'>{leader_display}</td>
+            </tr>
+            <tr>
+                <td style='padding:10px 14px; font-weight:600;'>Special Needs Serving Girl</td>
+                <td style='padding:10px 14px;'>{snsg_display}</td>
+            </tr>
         </tbody>
     </table>
     """
@@ -600,6 +673,10 @@ def main():
     director_rows = director_rows.sort_values(by=["Serving Girl"], ascending=True)
 
     st.subheader(f"Director: {selected_director}")
+
+    if selected_director_key == SPECIAL_NEEDS_DIRECTOR_KEY:
+        with st.expander("Special Needs Serving Base", expanded=False):
+            st.markdown(build_special_needs_table_html(serving_df), unsafe_allow_html=True)
 
     latest_lookup = {}
 

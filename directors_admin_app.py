@@ -112,7 +112,6 @@ def find_column(df: pd.DataFrame, candidates: List[str], required: bool = True) 
 
     if required:
         raise KeyError(f"Could not find required column. Tried: {candidates}. Found: {list(df.columns)}")
-
     return None
 
 
@@ -129,6 +128,22 @@ def split_multi_role_codes(value: str) -> List[str]:
         return []
     parts = re.split(r"\s*&\s*|\s*,\s*|\s*/\s*|\s*\+\s*", text)
     return [part.strip() for part in parts if part.strip()]
+
+
+def contains_role_code(raw_value: str, target_code: str) -> bool:
+    codes = [code.upper() for code in split_multi_role_codes(raw_value)]
+    return target_code.upper() in codes
+
+
+def deduplicate_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    result = []
+    for value in values:
+        key = normalized_key(value)
+        if key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
 
 
 def get_target_availability_month() -> str:
@@ -168,24 +183,6 @@ def make_unique_headers(headers: List[str]) -> List[str]:
     return unique
 
 
-def deduplicate_preserve_order(values: List[str]) -> List[str]:
-    seen = set()
-    result = []
-
-    for value in values:
-        key = normalized_key(value)
-        if key not in seen:
-            seen.add(key)
-            result.append(value)
-
-    return result
-
-
-def contains_role_code(raw_value: str, target_code: str) -> bool:
-    codes = [code.upper() for code in split_multi_role_codes(raw_value)]
-    return target_code.upper() in codes
-
-
 # --------------------------------------------------
 # GOOGLE SHEETS
 # --------------------------------------------------
@@ -211,7 +208,7 @@ def open_workbook():
     return client.open_by_key(SHEET_ID)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def read_tab(tab_name: str) -> pd.DataFrame:
     workbook = open_workbook()
     worksheet = workbook.worksheet(tab_name)
@@ -302,9 +299,7 @@ def prepare_servingbase(serving_df: pd.DataFrame) -> pd.DataFrame:
 
     renamed["__director_key"] = renamed["Director"].apply(normalized_key)
     renamed["__serving_girl_key"] = renamed["Serving Girl"].apply(normalized_key)
-    renamed["__response_lookup_key"] = (
-        renamed["__director_key"] + "||" + renamed["__serving_girl_key"]
-    )
+    renamed["__response_lookup_key"] = renamed["__director_key"] + "||" + renamed["__serving_girl_key"]
 
     return renamed
 
@@ -321,11 +316,7 @@ def prepare_latest_responses(responses_df: pd.DataFrame) -> pd.DataFrame:
         responses_df,
         ["timestamp", "Timestamp", "Time stamp", "Submitted At", "Submission Timestamp"],
     )
-    director_col = find_column(
-        responses_df,
-        ["Director"],
-        required=False,
-    )
+    director_col = find_column(responses_df, ["Director"], required=False)
 
     df = responses_df.copy()
     df["__serving_girl_key"] = df[serving_girl_col].apply(normalized_key)
@@ -397,7 +388,7 @@ def extract_response_answers(response_row: pd.Series) -> List[Tuple[str, str]]:
     return items
 
 
-def get_special_needs_serving_base(serving_df: pd.DataFrame) -> Dict[str, List[str]]:
+def get_special_needs_serving_base(serving_df: pd.DataFrame) -> pd.DataFrame:
     special_needs_leaders = []
     special_needs_serving_girls = []
 
@@ -429,152 +420,67 @@ def get_special_needs_serving_base(serving_df: pd.DataFrame) -> Dict[str, List[s
         if found_snsg:
             special_needs_serving_girls.append(serving_girl_name)
 
-    return {
-        "Special Needs Leader": deduplicate_preserve_order(sorted(special_needs_leaders)),
-        "Special Needs Serving Girl": deduplicate_preserve_order(sorted(special_needs_serving_girls)),
-    }
+    leader_text = "\n".join(sorted(deduplicate_preserve_order(special_needs_leaders))) or "-"
+    snsg_text = "\n".join(sorted(deduplicate_preserve_order(special_needs_serving_girls))) or "-"
+
+    return pd.DataFrame(
+        [
+            {"Position": "Special Needs Leader", "Serving Girl": leader_text},
+            {"Position": "Special Needs Serving Girl", "Serving Girl": snsg_text},
+        ]
+    )
+
+
+def build_priority_dataframe(serving_row: pd.Series, mapping_dict: Dict[str, str]) -> pd.DataFrame:
+    rows = []
+
+    primary_campus = map_campus(serving_row.get("Primary Campus", ""))
+    if primary_campus:
+        rows.append({"Field": "Primary Campus", "Details": primary_campus})
+
+    group_value = normalize_text(serving_row.get("Group", ""))
+    director = normalize_text(serving_row.get("Director", ""))
+    serving_girl = normalize_text(serving_row.get("Serving Girl", ""))
+
+    if serving_girl != director and not is_blank_or_na(group_value):
+        rows.append({"Field": "Group", "Details": group_value})
+
+    priority_sections = build_priority_sections(serving_row, mapping_dict)
+    for heading, values in priority_sections.items():
+        rows.append({"Field": heading, "Details": "\n".join(values)})
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Field", "Details"])
+
+
+def build_response_dataframe(response_row: Optional[pd.Series]) -> pd.DataFrame:
+    if response_row is None:
+        return pd.DataFrame(columns=["Field", "Value"])
+
+    response_items = extract_response_answers(response_row)
+    if not response_items:
+        return pd.DataFrame(columns=["Field", "Value"])
+
+    rows = [{"Field": label, "Value": value} for label, value in response_items]
+    return pd.DataFrame(rows)
 
 
 # --------------------------------------------------
 # RENDERING
 # --------------------------------------------------
-def build_priority_table_html(serving_row: pd.Series, mapping_dict: Dict[str, str]) -> str:
-    primary_campus = map_campus(serving_row.get("Primary Campus", ""))
-    group_value = normalize_text(serving_row.get("Group", ""))
-    director = normalize_text(serving_row.get("Director", ""))
-    serving_girl = normalize_text(serving_row.get("Serving Girl", ""))
-    priority_sections = build_priority_sections(serving_row, mapping_dict)
-
-    rows = []
-
-    if primary_campus:
-        rows.append(
-            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Primary Campus</td>"
-            f"<td style='padding:8px 14px; width:60%;'>{safe_html(primary_campus)}</td></tr>"
-        )
-
-    if serving_girl != director and not is_blank_or_na(group_value):
-        rows.append(
-            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>Group</td>"
-            f"<td style='padding:8px 14px; width:60%;'>{safe_html(group_value)}</td></tr>"
-        )
-
-    for heading, values in priority_sections.items():
-        joined_values = "<br>".join(safe_html(value) for value in values)
-        rows.append(
-            f"<tr><td style='padding:8px 14px; font-weight:600; width:40%;'>{safe_html(heading)}</td>"
-            f"<td style='padding:8px 14px; width:60%;'>{joined_values}</td></tr>"
-        )
-
-    if not rows:
-        return ""
-
-    return f"""
-    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-bottom:10px;'>
-        <tbody>
-            {''.join(rows)}
-        </tbody>
-    </table>
-    """
-
-
-def build_status_html(response_row: Optional[pd.Series], target_month: str) -> str:
+def render_status_message(response_row: Optional[pd.Series], target_month: str) -> None:
     availability_month = get_availability_month(response_row)
 
     if response_row is None:
-        return (
-            "<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;"
-            "border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
-            "No submission found for this serving girl.</div>"
-        )
+        st.error("No submission found for this serving girl.")
+        return
 
     if is_current_month_submission(response_row, target_month):
-        return (
-            f"<div style='background-color:#dcfce7;color:#166534;padding:10px 12px;"
-            f"border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
-            f"Latest response submitted for availability month: {safe_html(availability_month)}</div>"
+        st.success(f"Latest response submitted for availability month: {availability_month}")
+    else:
+        st.warning(
+            f"Latest response found for availability month {availability_month or 'Unknown'}, "
+            f"not for the current target month ({target_month})."
         )
-
-    return (
-        f"<div style='background-color:#fde8e8;color:#991b1b;padding:10px 12px;"
-        f"border-radius:8px;margin:8px 0 10px 0;font-weight:600;'>"
-        f"Latest response found for availability month {safe_html(availability_month or 'Unknown')}, "
-        f"not for the current target month ({safe_html(target_month)}).</div>"
-    )
-
-
-def build_response_table_html(response_row: Optional[pd.Series]) -> str:
-    if response_row is None:
-        return ""
-
-    response_items = extract_response_answers(response_row)
-    if not response_items:
-        return "<div style='margin-top:8px;'>No response details available.</div>"
-
-    availability_month = get_availability_month(response_row)
-    header_text = f"Availability month: {availability_month}" if availability_month else "Availability"
-
-    rows = []
-    for label, value in response_items:
-        if normalized_key(label) == "reason":
-            rows.append(
-                f"<tr>"
-                f"<td style='padding:8px 14px; width:40%; color:#991b1b; font-weight:600;'>{safe_html(label)}</td>"
-                f"<td style='padding:8px 14px; width:60%; background-color:#fde8e8; color:#991b1b; font-weight:600;'>{safe_html(value)}</td>"
-                f"</tr>"
-            )
-        else:
-            rows.append(
-                f"<tr>"
-                f"<td style='padding:8px 14px; width:40%;'>{safe_html(label)}</td>"
-                f"<td style='padding:8px 14px; width:60%;'>{safe_html(value)}</td>"
-                f"</tr>"
-            )
-
-    return f"""
-    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed;'>
-        <thead>
-            <tr>
-                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:40%;'>Field</th>
-                <th style='text-align:left; padding:8px 14px; border-bottom:1px solid #e5e7eb; width:60%;'>{safe_html(header_text)}</th>
-            </tr>
-        </thead>
-        <tbody>
-            {''.join(rows)}
-        </tbody>
-    </table>
-    """
-
-
-def build_special_needs_table_html(serving_df: pd.DataFrame) -> str:
-    special_needs_data = get_special_needs_serving_base(serving_df)
-
-    leader_names = special_needs_data.get("Special Needs Leader", [])
-    snsg_names = special_needs_data.get("Special Needs Serving Girl", [])
-
-    leader_display = "<br>".join(safe_html(name) for name in leader_names) if leader_names else "-"
-    snsg_display = "<br>".join(safe_html(name) for name in snsg_names) if snsg_names else "-"
-
-    return f"""
-    <table style='width:100%; border-collapse:separate; border-spacing:0 0; table-layout:fixed; margin-top:8px;'>
-        <thead>
-            <tr>
-                <th style='text-align:left; padding:10px 14px; border-bottom:1px solid #e5e7eb; width:35%;'>Position</th>
-                <th style='text-align:left; padding:10px 14px; border-bottom:1px solid #e5e7eb; width:65%;'>Serving Girl</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td style='padding:10px 14px; font-weight:600;'>Special Needs Leader</td>
-                <td style='padding:10px 14px;'>{leader_display}</td>
-            </tr>
-            <tr>
-                <td style='padding:10px 14px; font-weight:600;'>Special Needs Serving Girl</td>
-                <td style='padding:10px 14px;'>{snsg_display}</td>
-            </tr>
-        </tbody>
-    </table>
-    """
 
 
 def render_serving_girl_card(
@@ -586,15 +492,39 @@ def render_serving_girl_card(
     serving_girl = normalize_text(serving_row["Serving Girl"])
 
     with st.expander(serving_girl, expanded=False):
-        priority_table_html = build_priority_table_html(serving_row, mapping_dict)
-        if priority_table_html:
-            st.markdown(priority_table_html, unsafe_allow_html=True)
+        priority_df = build_priority_dataframe(serving_row, mapping_dict)
+        if not priority_df.empty:
+            st.dataframe(priority_df, use_container_width=True, hide_index=True)
 
-        st.markdown(build_status_html(latest_response_row, target_month), unsafe_allow_html=True)
+        render_status_message(latest_response_row, target_month)
 
-        response_table_html = build_response_table_html(latest_response_row)
-        if response_table_html:
-            st.markdown(response_table_html, unsafe_allow_html=True)
+        response_df = build_response_dataframe(latest_response_row)
+        if not response_df.empty:
+            st.dataframe(response_df, use_container_width=True, hide_index=True)
+        elif latest_response_row is not None:
+            st.info("No response details available.")
+
+
+def render_change_section(selected_director: str, key_suffix: str) -> None:
+    st.markdown("---")
+    st.markdown("## 📌 Report a change")
+    st.caption("Let us know if something needs to be updated.")
+
+    change_text = st.text_area(
+        "Describe the change you want:",
+        height=120,
+        key=f"report_change_text_{key_suffix}",
+    )
+
+    if st.button("Submit change", key=f"submit_change_{key_suffix}"):
+        if not change_text.strip():
+            st.warning("Please enter a description of the change.")
+        else:
+            try:
+                append_change_request(selected_director, change_text.strip())
+                st.success("Your change request has been submitted ✅")
+            except Exception as e:
+                st.error(f"Error saving change: {e}")
 
 
 # --------------------------------------------------
@@ -648,25 +578,7 @@ def main():
 
     if not confirmed:
         st.info("Please tick the confirmation box before viewing serving girls.")
-        st.markdown("---")
-        st.markdown("## 📌 Report a change")
-        st.caption("Let us know if something needs to be updated.")
-
-        change_text = st.text_area(
-            "Describe the change you want:",
-            height=120,
-            key="report_change_text_locked",
-        )
-
-        if st.button("Submit change", key="submit_change_locked"):
-            if not change_text.strip():
-                st.warning("Please enter a description of the change.")
-            else:
-                try:
-                    append_change_request(selected_director, change_text.strip())
-                    st.success("Your change request has been submitted ✅")
-                except Exception as e:
-                    st.error(f"Error saving change: {e}")
+        render_change_section(selected_director, "locked")
         st.stop()
 
     director_rows = serving_df[serving_df["__director_key"] == selected_director_key].copy()
@@ -676,10 +588,10 @@ def main():
 
     if selected_director_key == SPECIAL_NEEDS_DIRECTOR_KEY:
         with st.expander("Special Needs Serving Base", expanded=False):
-            st.markdown(build_special_needs_table_html(serving_df), unsafe_allow_html=True)
+            special_needs_df = get_special_needs_serving_base(serving_df)
+            st.dataframe(special_needs_df, use_container_width=True, hide_index=True)
 
     latest_lookup = {}
-
     if not latest_responses_df.empty:
         if "__response_lookup_key" in latest_responses_df.columns:
             latest_lookup = {
@@ -696,28 +608,14 @@ def main():
 
     for _, row in director_rows.iterrows():
         lookup_key = row.get("__response_lookup_key", row["__serving_girl_key"])
-
         latest_response_row = latest_lookup.get(lookup_key)
+
         if latest_response_row is None:
             latest_response_row = latest_lookup.get(row["__serving_girl_key"])
 
         render_serving_girl_card(row, latest_response_row, mapping_dict, target_month)
 
-    st.markdown("---")
-    st.markdown("## 📌 Report a change")
-    st.caption("Let us know if something needs to be updated.")
-
-    change_text = st.text_area("Describe the change you want:", height=120, key="report_change_text")
-
-    if st.button("Submit change", key="submit_change"):
-        if not change_text.strip():
-            st.warning("Please enter a description of the change.")
-        else:
-            try:
-                append_change_request(selected_director, change_text.strip())
-                st.success("Your change request has been submitted ✅")
-            except Exception as e:
-                st.error(f"Error saving change: {e}")
+    render_change_section(selected_director, "unlocked")
 
 
 if __name__ == "__main__":
